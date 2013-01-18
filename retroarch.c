@@ -520,6 +520,11 @@ static bool input_apply_turbo(unsigned port, unsigned id, bool res)
 static int16_t input_state(unsigned port, unsigned device, unsigned index, unsigned id)
 {
    device &= RETRO_DEVICE_MASK;
+ 
+   // no input to game if hotkeys activated
+   static const struct retro_keybind *bind = &g_settings.input.binds[0][RARCH_ENABLE_HOTKEY];
+   if ((bind->key != RETROK_UNKNOWN || bind->joykey != NO_BTN || bind->joyaxis != AXIS_NONE) && !driver.block_hotkey)
+      return 0;
 
 #ifdef HAVE_BSV_MOVIE
    if (g_extern.bsv.movie && g_extern.bsv.movie_playback)
