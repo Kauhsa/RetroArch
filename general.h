@@ -31,9 +31,14 @@
 #include "cheats.h"
 #include "audio/ext/rarch_dsp.h"
 #include "compat/strl.h"
+#include "performance.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
+#endif
+
+#ifdef HAVE_RMENU
+#include "gfx/image.h"
 #endif
 
 // Platform-specific headers
@@ -90,6 +95,10 @@
 
 #include "audio/resampler.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define MAX_PLAYERS 8
 
 enum dpad_emu_enums
@@ -133,12 +142,6 @@ enum menu_enums
    MODE_VIDEO_PAL_TEMPORAL_ENABLE,
    MODE_VIDEO_PAL_VSYNC_BLOCK,
    MODE_AUDIO_CUSTOM_BGM_ENABLE,
-   MODE_UNZIP_TO_CURDIR,
-   MODE_UNZIP_TO_CURDIR_AND_LOAD_FIRST_FILE,
-   MODE_UNZIP_TO_CURDIR_AND_LOAD_FIRST_FILE_AND_CLEAN,
-   MODE_UNZIP_TO_CACHEDIR,
-   MODE_UNZIP_DELETE_PENDING,
-   MODE_FILEBROWSER_REFRESH_PENDING,
    MODE_OSK_DRAW,
    MODE_OSK_ENTRY_SUCCESS,
    MODE_OSK_ENTRY_FAIL,
@@ -163,6 +166,7 @@ struct settings
       bool crop_overscan;
       float aspect_ratio;
       bool aspect_ratio_auto;
+      bool scale_integer;
       unsigned aspect_ratio_idx;
       char cg_shader_path[PATH_MAX];
       char bsnes_shader_path[PATH_MAX];
@@ -217,6 +221,8 @@ struct settings
       bool rate_control;
       float rate_control_delta;
       float volume; // dB scale
+
+      char resampler[32];
    } audio;
 
    struct
@@ -229,6 +235,8 @@ struct settings
       bool debug_enable;
 #ifdef ANDROID
       bool autodetect_enable;
+      unsigned icade_profile[MAX_PLAYERS];
+      unsigned icade_count;
 #endif
 #ifdef RARCH_CONSOLE
       uint64_t default_binds[RARCH_CUSTOM_BIND_LIST_END];
@@ -241,6 +249,7 @@ struct settings
       unsigned turbo_duty_cycle;
 
       char overlay[PATH_MAX];
+      float overlay_opacity;
    } input;
 
    char libretro[PATH_MAX];
@@ -262,6 +271,7 @@ struct settings
    bool block_sram_overwrite;
    bool savestate_auto_index;
    bool savestate_auto_save;
+   bool savestate_auto_load;
 
    bool network_cmd_enable;
    uint16_t network_cmd_port;
@@ -309,7 +319,8 @@ struct global
    bool has_justifiers;
    bool has_multitap;
 
-   FILE *rom_file;
+   bool rom_file_temporary;
+   char last_rom[PATH_MAX];
    enum rarch_game_type game_type;
    uint32_t cart_crc;
 
@@ -370,7 +381,8 @@ struct global
 
    struct
    {
-      rarch_resampler_t *source;
+      void *resampler_data;
+      const rarch_resampler_t *resampler;
 
       float *data;
 
@@ -401,7 +413,19 @@ struct global
 
       float volume_db;
       float volume_gain;
+
    } audio_data;
+
+   struct
+   {
+#define AUDIO_BUFFER_FREE_SAMPLES_COUNT (8 * 1024)
+      unsigned buffer_free_samples[AUDIO_BUFFER_FREE_SAMPLES_COUNT];
+      uint64_t buffer_free_samples_count;
+
+#define MEASURE_FRAME_TIME_SAMPLES_COUNT (2 * 1024)
+      rarch_time_t frame_time_samples[MEASURE_FRAME_TIME_SAMPLES_COUNT];
+      uint64_t frame_time_samples_count;
+   } measure_data;
 
    struct
    {
@@ -561,6 +585,11 @@ struct global
          oskutil_params oskutil_handle;
       } misc;
 #endif
+#ifdef HAVE_RMENU
+      struct texture_image menu_texture;
+      char menu_texture_path[PATH_MAX];
+      struct texture_image menu_panel;
+#endif
    } console;
 
    uint64_t lifecycle_state;
@@ -628,6 +657,10 @@ void rarch_state_slot_decrease(void);
 extern struct settings g_settings;
 extern struct global g_extern;
 /////////
+
+#ifdef __cplusplus
+}
+#endif
 
 #include "retroarch_logger.h"
 

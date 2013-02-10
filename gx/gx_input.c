@@ -33,7 +33,8 @@
 #include "../libretro.h"
 #include <stdlib.h>
 
-#define JOYSTICK_THRESHOLD 48
+#define GC_JOYSTICK_THRESHOLD 48
+#define WII_JOYSTICK_THRESHOLD 40
 
 #define MAX_PADS 4
 
@@ -260,35 +261,6 @@ static void gx_input_post_init(void)
       gx_input_set_analog_dpad_mapping(g_settings.input.device[i], g_settings.input.dpad_emulation[i], i);
 }
 
-#define gx_stick_x(x) ((s8)((sin((x).ang * M_PI / 180.0f)) * (x).mag * 128.0f))
-#define gx_stick_y(x) ((s8)((cos((x).ang * M_PI / 180.0f)) * (x).mag * 128.0f))
-
-static s8 WPADCLASSIC_StickX(float mag, float ang)
-{
-   /* calculate X value (angle needs to be converted into radians */
-   if (mag > 1.0f)
-      mag = 1.0f;
-   else if (mag < -1.0f)
-      mag = -1.0f;
-
-   double val = mag * cos(M_PI * ang / 180.0f);
-
-   return (s8)(val * 128.0f);
-}
-
-static s8 WPADCLASSIC_StickY(float mag, float ang)
-{
-   /* calculate X value (angle needs to be converted into radians */
-   if (mag > 1.0f)
-      mag = 1.0f;
-   else if (mag < -1.0f)
-      mag = -1.0f;
-
-   double val = mag * sin(M_PI * ang / 180.0f);
-
-   return (s8)(val * 128.0f);
-}
-
 static void gx_input_poll(void *data)
 {
    (void)data;
@@ -358,11 +330,33 @@ static void gx_input_poll(void *data)
                   && (down & WPAD_CLASSIC_BUTTON_ZR))
                *state_cur |= GX_QUIT_KEY;
 
-            s8 ls_x = WPADCLASSIC_StickX(exp->classic.ljs.mag, exp->classic.ljs.ang);
-            s8 ls_y = WPADCLASSIC_StickY(exp->classic.ljs.mag, exp->classic.ljs.ang);
-            s8 rs_x = WPADCLASSIC_StickX(exp->classic.rjs.mag, exp->classic.rjs.ang);
-            s8 rs_y = WPADCLASSIC_StickY(exp->classic.rjs.mag, exp->classic.rjs.ang);
+            float ljs_mag = exp->classic.ljs.mag;
+            float ljs_ang = exp->classic.ljs.ang;
 
+            float rjs_mag = exp->classic.rjs.mag;
+            float rjs_ang = exp->classic.rjs.ang;
+
+            if (ljs_mag > 1.0f)
+               ljs_mag = 1.0f;
+            else if (ljs_mag < -1.0f)
+               ljs_mag = -1.0f;
+
+            if (rjs_mag > 1.0f)
+               rjs_mag = 1.0f;
+            else if (rjs_mag < -1.0f)
+               rjs_mag = -1.0f;
+
+            double ljs_val_x = -ljs_mag * sin(M_PI * ljs_ang / 180.0);
+            double ljs_val_y = -ljs_mag * cos(M_PI * ljs_ang / 180.0);
+
+            double rjs_val_x = -rjs_mag * sin(M_PI * rjs_ang / 180.0);
+            double rjs_val_y = -rjs_mag * cos(M_PI * rjs_ang / 180.0);
+
+            s8 ls_x = (s8)(ljs_val_x * 127.0f);
+            s8 ls_y = (s8)(ljs_val_y * 127.0f);
+
+            s8 rs_x = (s8)(rjs_val_x * 127.0f);
+            s8 rs_y = (s8)(rjs_val_y * 127.0f);
 #if 0
             char str[128];
             snprintf(str, sizeof(str), "ls x: %d, ls y: %d, rs x: %d, rs y: %d", ls_x, ls_y, rs_x, rs_y); 
@@ -370,15 +364,15 @@ static void gx_input_poll(void *data)
             msg_queue_push(g_extern.msg_queue, str, 1, 48);
 #endif
 
-            *state_cur |= (ls_x < -40) ? GX_CLASSIC_LSTICK_RIGHT : 0;
-            *state_cur |= (ls_x > 40) ? GX_CLASSIC_LSTICK_LEFT : 0;
-            *state_cur |= (ls_y < -40) ? GX_CLASSIC_LSTICK_UP : 0;
-            *state_cur |= (ls_y > 40) ? GX_CLASSIC_LSTICK_DOWN : 0;
+            *state_cur |= (ls_x < -WII_JOYSTICK_THRESHOLD) ? GX_CLASSIC_LSTICK_RIGHT : 0;
+            *state_cur |= (ls_x > WII_JOYSTICK_THRESHOLD) ? GX_CLASSIC_LSTICK_LEFT : 0;
+            *state_cur |= (ls_y < -WII_JOYSTICK_THRESHOLD) ? GX_CLASSIC_LSTICK_UP : 0;
+            *state_cur |= (ls_y > WII_JOYSTICK_THRESHOLD) ? GX_CLASSIC_LSTICK_DOWN : 0;
 
-            *state_cur |= (rs_x < -40) ? GX_CLASSIC_RSTICK_RIGHT : 0;
-            *state_cur |= (rs_x > 40) ? GX_CLASSIC_RSTICK_LEFT: 0;
-            *state_cur |= (rs_y < -40) ? GX_CLASSIC_RSTICK_UP : 0;
-            *state_cur |= (rs_y > 40) ? GX_CLASSIC_RSTICK_DOWN : 0;
+            *state_cur |= (rs_x < -WII_JOYSTICK_THRESHOLD) ? GX_CLASSIC_RSTICK_RIGHT : 0;
+            *state_cur |= (rs_x > WII_JOYSTICK_THRESHOLD) ? GX_CLASSIC_RSTICK_LEFT: 0;
+            *state_cur |= (rs_y < -WII_JOYSTICK_THRESHOLD) ? GX_CLASSIC_RSTICK_UP : 0;
+            *state_cur |= (rs_y > WII_JOYSTICK_THRESHOLD) ? GX_CLASSIC_RSTICK_DOWN : 0;
          }
          else if (type == WPAD_EXP_NUNCHUK)
          {
@@ -391,13 +385,24 @@ static void gx_input_poll(void *data)
             *state_cur |= (down & WPAD_NUNCHUK_BUTTON_Z) ? GX_NUNCHUK_Z : 0;
             *state_cur |= (down & WPAD_NUNCHUK_BUTTON_C) ? GX_NUNCHUK_C : 0;
 
-            s8 x = gx_stick_x(exp->nunchuk.js);
-            s8 y = gx_stick_y(exp->nunchuk.js);
+            float js_mag = exp->nunchuk.js.mag;
+            float js_ang = exp->nunchuk.js.ang;
 
-            if (abs(x) > JOYSTICK_THRESHOLD)
-               *state_cur |= x > 0 ? GX_NUNCHUK_RIGHT : GX_NUNCHUK_LEFT;
-            if (abs(y) > JOYSTICK_THRESHOLD)
-               *state_cur |= y > 0 ? GX_NUNCHUK_UP : GX_NUNCHUK_DOWN;
+            if (js_mag > 1.0f)
+               js_mag = 1.0f;
+            else if (js_mag < -1.0f)
+               js_mag = -1.0f;
+
+            double js_val_x = -js_mag * sin(M_PI * js_ang / 180.0);
+            double js_val_y = -js_mag * cos(M_PI * js_ang / 180.0);
+
+            s8 x = (s8)(js_val_x * 127.0f);
+            s8 y = (s8)(js_val_y * 127.0f);
+
+            *state_cur |= (x < -WII_JOYSTICK_THRESHOLD) ? GX_NUNCHUK_RIGHT : 0;
+            *state_cur |= (x > WII_JOYSTICK_THRESHOLD) ? GX_NUNCHUK_LEFT : 0;
+            *state_cur |= (y < -WII_JOYSTICK_THRESHOLD) ? GX_NUNCHUK_UP : 0;
+            *state_cur |= (y > WII_JOYSTICK_THRESHOLD) ? GX_NUNCHUK_DOWN : 0;
          }
       }
 
@@ -423,18 +428,18 @@ static void gx_input_poll(void *data)
          s8 x = PAD_StickX(port);
          s8 y = PAD_StickY(port);
 
-         if (abs(x) > JOYSTICK_THRESHOLD)
-            *state_cur |= x > 0 ? GX_GC_LSTICK_RIGHT : GX_GC_LSTICK_LEFT;
-         if (abs(y) > JOYSTICK_THRESHOLD)
-            *state_cur |= y > 0 ? GX_GC_LSTICK_UP : GX_GC_LSTICK_DOWN;
+         *state_cur |= (x < -GC_JOYSTICK_THRESHOLD) ? GX_GC_LSTICK_LEFT : 0;
+         *state_cur |= (x > GC_JOYSTICK_THRESHOLD) ? GX_GC_LSTICK_RIGHT : 0;
+         *state_cur |= (y < -GC_JOYSTICK_THRESHOLD) ? GX_GC_LSTICK_DOWN : 0;
+         *state_cur |= (y > GC_JOYSTICK_THRESHOLD) ? GX_GC_LSTICK_UP : 0;
 
          x = PAD_SubStickX(port);
          y = PAD_SubStickY(port);
 
-         if (abs(x) > JOYSTICK_THRESHOLD)
-            *state_cur |= x > 0 ? GX_GC_RSTICK_RIGHT : GX_GC_RSTICK_LEFT;
-         if (abs(y) > JOYSTICK_THRESHOLD)
-            *state_cur |= y > 0 ? GX_GC_RSTICK_UP : GX_GC_RSTICK_DOWN;
+         *state_cur |= (x < -GC_JOYSTICK_THRESHOLD) ? GX_GC_RSTICK_LEFT : 0;
+         *state_cur |= (x > GC_JOYSTICK_THRESHOLD) ? GX_GC_RSTICK_RIGHT : 0;
+         *state_cur |= (y < -GC_JOYSTICK_THRESHOLD) ? GX_GC_RSTICK_DOWN : 0;
+         *state_cur |= (y > GC_JOYSTICK_THRESHOLD) ? GX_GC_RSTICK_UP : 0;
 
          if ((*state_cur & (GX_GC_LSTICK_DOWN | GX_GC_RSTICK_DOWN | GX_GC_L_TRIGGER | GX_GC_R_TRIGGER)) == (GX_GC_LSTICK_DOWN | GX_GC_RSTICK_DOWN | GX_GC_L_TRIGGER | GX_GC_R_TRIGGER))
             *state_cur |= GX_QUIT_KEY;
@@ -458,17 +463,47 @@ static void gx_input_poll(void *data)
          (1ULL << RARCH_RMENU_TOGGLE) |
          (1ULL << RARCH_RMENU_QUICKMENU_TOGGLE));
 
-   if ((*state_p1 & GX_CLASSIC_RSTICK_DOWN) && !(*state_p1 & GX_CLASSIC_ZR_TRIGGER))
+   if (
+#ifdef HW_RVL
+         ((*state_p1 & GX_CLASSIC_RSTICK_DOWN) && !(*state_p1 & GX_CLASSIC_ZR_TRIGGER)) ||
+#endif
+         ((*state_p1 & GX_GC_RSTICK_DOWN) && !(*state_p1 & GX_GC_Z_TRIGGER))
+         )
       *lifecycle_state |= (1ULL << RARCH_FAST_FORWARD_HOLD_KEY);
-   if ((*state_p1 & GX_CLASSIC_RSTICK_UP) && (*state_p1 & GX_CLASSIC_ZR_TRIGGER))
+   if (
+#ifdef HW_RVL
+        ((*state_p1 & GX_CLASSIC_RSTICK_UP) && (*state_p1 & GX_CLASSIC_ZR_TRIGGER)) ||
+#endif
+        ((*state_p1 & GX_GC_RSTICK_UP) && (*state_p1 & GX_GC_Z_TRIGGER))
+         )
       *lifecycle_state |= (1ULL << RARCH_LOAD_STATE_KEY);
-   if ((*state_p1 & GX_CLASSIC_RSTICK_DOWN) && (*state_p1 & GX_CLASSIC_ZR_TRIGGER))
+   if (
+#ifdef HW_RVL
+         ((*state_p1 & GX_CLASSIC_RSTICK_DOWN) && (*state_p1 & GX_CLASSIC_ZR_TRIGGER)) ||
+#endif
+         ((*state_p1 & GX_GC_RSTICK_DOWN) && (*state_p1 & GX_GC_Z_TRIGGER))
+         )
       *lifecycle_state |= (1ULL << RARCH_SAVE_STATE_KEY);
-   if ((*state_p1 & GX_CLASSIC_RSTICK_RIGHT) && (*state_p1 & GX_CLASSIC_ZR_TRIGGER))
+   if (
+#ifdef HW_RVL
+         ((*state_p1 & GX_CLASSIC_RSTICK_RIGHT) && (*state_p1 & GX_CLASSIC_ZR_TRIGGER)) ||
+#endif
+         ((*state_p1 & GX_GC_RSTICK_RIGHT) && (*state_p1 & GX_GC_Z_TRIGGER))
+         )
       *lifecycle_state |= (1ULL << RARCH_STATE_SLOT_PLUS);
-   if ((*state_p1 & GX_CLASSIC_RSTICK_LEFT) && (*state_p1 & GX_CLASSIC_ZR_TRIGGER))
+   if (
+#ifdef HW_RVL
+         ((*state_p1 & GX_CLASSIC_RSTICK_LEFT) && (*state_p1 & GX_CLASSIC_ZR_TRIGGER)) ||
+#endif
+         ((*state_p1 & GX_GC_RSTICK_LEFT) && (*state_p1 & GX_GC_Z_TRIGGER))
+         )
       *lifecycle_state |= (1ULL << RARCH_STATE_SLOT_MINUS);
-   if ((*state_p1 & GX_CLASSIC_RSTICK_UP) && !(*state_p1 & GX_CLASSIC_ZR_TRIGGER))
+   if (
+#ifdef HW_RVL
+         ((*state_p1 & GX_CLASSIC_RSTICK_UP) && !(*state_p1 & GX_CLASSIC_ZR_TRIGGER)) ||
+#endif
+         ((*state_p1 & GX_GC_RSTICK_UP) && !(*state_p1 & GX_GC_Z_TRIGGER))
+         )
       *lifecycle_state |= (1ULL << RARCH_REWIND);
 
    if (g_menu)
@@ -523,12 +558,12 @@ static void gx_set_default_keybind_lut(unsigned device, unsigned port)
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_RIGHT]  = platform_keys[GX_DEVICE_WIIMOTE_ID_JOYPAD_RIGHT].joykey;
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_A]      = platform_keys[GX_DEVICE_WIIMOTE_ID_JOYPAD_2].joykey;
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_X]      = platform_keys[GX_DEVICE_WIIMOTE_ID_JOYPAD_B].joykey;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L]      = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R]      = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L2]     = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R2]     = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L3]     = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R3]     = 0;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L]      = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R]      = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L2]     = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R2]     = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L3]     = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R3]     = NO_BTN;
          break;
       case GX_DEVICE_NUNCHUK:
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_B]      = platform_keys[GX_DEVICE_WIIMOTE_ID_JOYPAD_B].joykey;
@@ -543,10 +578,10 @@ static void gx_set_default_keybind_lut(unsigned device, unsigned port)
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_X]      = platform_keys[GX_DEVICE_WIIMOTE_ID_JOYPAD_1].joykey;
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L]      = platform_keys[GX_DEVICE_WIIMOTE_ID_JOYPAD_Z].joykey;
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R]      = platform_keys[GX_DEVICE_WIIMOTE_ID_JOYPAD_C].joykey;;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L2]     = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R2]     = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L3]     = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R3]     = 0;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L2]     = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R2]     = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L3]     = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R3]     = NO_BTN;
          break;
       case GX_DEVICE_CLASSIC:
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_B]      = platform_keys[GX_DEVICE_CLASSIC_ID_JOYPAD_B].joykey;
@@ -563,8 +598,8 @@ static void gx_set_default_keybind_lut(unsigned device, unsigned port)
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R]      = platform_keys[GX_DEVICE_CLASSIC_ID_JOYPAD_R_TRIGGER].joykey;
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L2]     = platform_keys[GX_DEVICE_CLASSIC_ID_JOYPAD_ZL_TRIGGER].joykey;
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R2]     = platform_keys[GX_DEVICE_CLASSIC_ID_JOYPAD_ZR_TRIGGER].joykey;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L3]     = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R3]     = 0;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L3]     = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R3]     = NO_BTN;
          break;
 #endif
       case GX_DEVICE_GAMECUBE:
@@ -580,10 +615,10 @@ static void gx_set_default_keybind_lut(unsigned device, unsigned port)
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_X]      = platform_keys[GX_DEVICE_GC_ID_JOYPAD_X].joykey;
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L]      = platform_keys[GX_DEVICE_GC_ID_JOYPAD_L_TRIGGER].joykey;
          g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R]      = platform_keys[GX_DEVICE_GC_ID_JOYPAD_R_TRIGGER].joykey;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L2]     = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R2]     = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L3]     = 0;
-         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R3]     = 0;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L2]     = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R2]     = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_L3]     = NO_BTN;
+         g_settings.input.default_binds[RETRO_DEVICE_ID_JOYPAD_R3]     = NO_BTN;
          break;
       default:
          break;

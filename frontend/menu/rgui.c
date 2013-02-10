@@ -30,12 +30,6 @@
 #define TERM_WIDTH (((RGUI_WIDTH - TERM_START_X - 15) / (FONT_WIDTH_STRIDE)))
 #define TERM_HEIGHT (((RGUI_HEIGHT - TERM_START_Y - 15) / (FONT_HEIGHT_STRIDE)) - 1)
 
-#ifdef HAVE_HDD_CACHE_PARTITION
-#define LAST_ZIP_EXTRACT ZIP_EXTRACT_TO_CACHE_DIR
-#else
-#define LAST_ZIP_EXTRACT ZIP_EXTRACT_TO_CURRENT_DIR_AND_LOAD_FIRST_FILE
-#endif
-
 #ifdef GEKKO
 enum
 {
@@ -48,6 +42,7 @@ enum
    GX_RESOLUTIONS_256_256,
    GX_RESOLUTIONS_256_480,
    GX_RESOLUTIONS_288_224,
+   GX_RESOLUTIONS_304_224,
    GX_RESOLUTIONS_320_200,
    GX_RESOLUTIONS_320_224,
    GX_RESOLUTIONS_320_240,
@@ -68,13 +63,14 @@ enum
    GX_RESOLUTIONS_512_478,
    GX_RESOLUTIONS_512_480,
    GX_RESOLUTIONS_512_512,
+   GX_RESOLUTIONS_576_224,
+   GX_RESOLUTIONS_608_224,
    GX_RESOLUTIONS_640_224,
    GX_RESOLUTIONS_640_240,
    GX_RESOLUTIONS_640_256,
    GX_RESOLUTIONS_640_288,
    GX_RESOLUTIONS_640_448,
    GX_RESOLUTIONS_640_480,
-   GX_RESOLUTIONS_DEFAULT,
    GX_RESOLUTIONS_LAST,
 };
 
@@ -88,6 +84,7 @@ unsigned rgui_gx_resolutions[GX_RESOLUTIONS_LAST][2] = {
    { 256, 256 },
    { 256, 480 },
    { 288, 224 },
+   { 304, 224 },
    { 320, 200 },
    { 320, 224 },
    { 320, 240 },
@@ -108,16 +105,17 @@ unsigned rgui_gx_resolutions[GX_RESOLUTIONS_LAST][2] = {
    { 512, 478 },
    { 512, 480 },
    { 512, 512 },
+   { 576, 224 },
+   { 608, 224 },
    { 640, 224 },
    { 640, 240 },
    { 640, 256 },
    { 640, 288 },
    { 640, 448 },
    { 640, 480 },
-   { 0, 0 }
 };
 
-unsigned rgui_current_gx_resolution = GX_RESOLUTIONS_DEFAULT;
+unsigned rgui_current_gx_resolution = GX_RESOLUTIONS_640_480;
 #endif
 
 unsigned RGUI_WIDTH = 320;
@@ -392,6 +390,7 @@ static void render_text(rgui_handle_t *rgui)
    blit_line(rgui, TERM_START_X + 15, 15, title, true);
 
    blit_line(rgui, TERM_START_X + 15, (TERM_HEIGHT * FONT_HEIGHT_STRIDE) + TERM_START_Y + 2, g_extern.title_buf, true);
+   blit_line(rgui, TERM_HEIGHT - 80, (TERM_HEIGHT * FONT_HEIGHT_STRIDE) + TERM_START_Y + 2, PACKAGE_VERSION, true);
 
    unsigned x = TERM_START_X;
    unsigned y = TERM_START_Y;
@@ -418,6 +417,12 @@ static void render_text(rgui_handle_t *rgui)
          case RGUI_FILE_DEVICE:
             snprintf(type_str, sizeof(type_str), "(DEV)");
             w = 5;
+            break;
+         case RGUI_SETTINGS_REWIND_ENABLE:
+            snprintf(type_str, sizeof(type_str), g_settings.rewind_enable ? "ON" : "OFF");
+            break;
+         case RGUI_SETTINGS_REWIND_GRANULARITY:
+            snprintf(type_str, sizeof(type_str), "%d", g_settings.rewind_granularity);
             break;
          case RGUI_SETTINGS_SAVESTATE_SAVE:
          case RGUI_SETTINGS_SAVESTATE_LOAD:
@@ -458,15 +463,13 @@ static void render_text(rgui_handle_t *rgui)
          case RGUI_SETTINGS_AUDIO_CONTROL_RATE:
             snprintf(type_str, sizeof(type_str), "%.3f", g_settings.audio.rate_control_delta);
             break;
-         case RGUI_SETTINGS_ZIP_EXTRACT:
-            if (g_extern.lifecycle_mode_state & (1ULL << MODE_UNZIP_TO_CURDIR))
-               snprintf(type_str, sizeof(type_str), "Current");
-            else if (g_extern.lifecycle_mode_state & (1ULL << MODE_UNZIP_TO_CURDIR_AND_LOAD_FIRST_FILE))
-               snprintf(type_str, sizeof(type_str), "Current + Load");
-            else if (g_extern.lifecycle_mode_state & (1ULL << MODE_UNZIP_TO_CURDIR_AND_LOAD_FIRST_FILE_AND_CLEAN))
-               snprintf(type_str, sizeof(type_str), "Current + Load +_Clean");
-            else if (g_extern.lifecycle_mode_state & (1ULL << MODE_UNZIP_TO_CACHEDIR))
-               snprintf(type_str, sizeof(type_str), "Cache");
+         case RGUI_SETTINGS_RESAMPLER_TYPE:
+#ifdef HAVE_SINC
+            if (strstr(g_settings.audio.resampler, "sinc"))
+               snprintf(type_str, sizeof(type_str), "Sinc");
+            else
+#endif
+               snprintf(type_str, sizeof(type_str), "Hermite");
             break;
          case RGUI_SETTINGS_SRAM_DIR:
             snprintf(type_str, sizeof(type_str), (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE)) ? "ON" : "OFF");
@@ -569,6 +572,28 @@ static int rgui_settings_toggle_setting(rgui_file_type_t setting, rgui_action_t 
 
    switch (setting)
    {
+      case RGUI_SETTINGS_REWIND_ENABLE:
+         if (action == RGUI_ACTION_OK || action == RGUI_ACTION_LEFT || action == RGUI_ACTION_RIGHT)
+         {
+            rmenu_settings_set(S_REWIND);
+
+            if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
+               rmenu_settings_msg(S_MSG_RESTART_RARCH, S_DELAY_180);
+         }
+         else if (action == RGUI_ACTION_START)
+            g_settings.rewind_enable = false;
+         break;
+      case RGUI_SETTINGS_REWIND_GRANULARITY:
+         if (action == RGUI_ACTION_OK || action == RGUI_ACTION_RIGHT)
+            g_settings.rewind_granularity++;
+         else if (action == RGUI_ACTION_LEFT)
+         {
+            if (g_settings.rewind_granularity > 1)
+               g_settings.rewind_granularity--;
+         }
+         else if (action == RGUI_ACTION_START)
+            g_settings.rewind_granularity = 1;
+         break;
       case RGUI_SETTINGS_SAVESTATE_SAVE:
       case RGUI_SETTINGS_SAVESTATE_LOAD:
          if (action == RGUI_ACTION_OK)
@@ -643,6 +668,10 @@ static int rgui_settings_toggle_setting(rgui_file_type_t setting, rgui_action_t 
          {
             if(rgui_current_gx_resolution < GX_RESOLUTIONS_LAST - 1)
             {
+               if ((rgui_current_gx_resolution + 1) > GX_RESOLUTIONS_640_480)
+                  if (CONF_GetVideo() != CONF_VIDEO_PAL)
+                     return 0;
+
                rgui_current_gx_resolution++;
                gx_set_video_mode(rgui_gx_resolutions[rgui_current_gx_resolution][0], rgui_gx_resolutions[rgui_current_gx_resolution][1]);
             }
@@ -729,13 +758,39 @@ static int rgui_settings_toggle_setting(rgui_file_type_t setting, rgui_action_t 
          else if (action == RGUI_ACTION_RIGHT)
             rmenu_settings_set(S_AUDIO_CONTROL_RATE_INCREMENT);
          break;
-      case RGUI_SETTINGS_ZIP_EXTRACT:
-         if (action == RGUI_ACTION_START)
-            rmenu_settings_set_default(S_DEF_UNZIP_MODE);
-         else if (action == RGUI_ACTION_LEFT)
-            rmenu_settings_set(S_UNZIP_MODE_DECREMENT);
-         else if (action == RGUI_ACTION_RIGHT)
-            rmenu_settings_set(S_UNZIP_MODE_INCREMENT);
+      case RGUI_SETTINGS_RESAMPLER_TYPE:
+         {
+            bool changed = false;
+            if (action == RGUI_ACTION_START)
+            {
+#ifdef HAVE_SINC
+               snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "sinc");
+#else
+               snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "hermite");
+#endif
+               changed = true;
+            }
+            else if (action == RGUI_ACTION_LEFT || action == RGUI_ACTION_RIGHT)
+            {
+#ifdef HAVE_SINC
+               if( strstr(g_settings.audio.resampler, "hermite"))
+                  snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "sinc");
+               else
+#endif
+                  snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "hermite");
+               changed = true;
+            }
+
+            if (g_extern.main_is_init && changed)
+            {
+               if (!rarch_resampler_realloc(&g_extern.audio_data.resampler_data, &g_extern.audio_data.resampler,
+                        g_settings.audio.resampler))
+               {
+                  RARCH_ERR("Failed to initialize resampler \"%s\".\n", g_settings.audio.resampler);
+                  g_extern.audio_active = false;
+               }
+            }
+         }
          break;
       case RGUI_SETTINGS_SRAM_DIR:
          if (action == RGUI_ACTION_START || action == RGUI_ACTION_LEFT)
@@ -843,6 +898,8 @@ static void rgui_settings_populate_entries(rgui_handle_t *rgui)
 {
    rgui_list_clear(rgui->folder_buf);
 
+   RGUI_MENU_ITEM("Rewind", RGUI_SETTINGS_REWIND_ENABLE);
+   RGUI_MENU_ITEM("Rewind granularity", RGUI_SETTINGS_REWIND_GRANULARITY);
    if (g_extern.main_is_init)
    {
       RGUI_MENU_ITEM("Save State", RGUI_SETTINGS_SAVESTATE_SAVE);
@@ -864,7 +921,7 @@ static void rgui_settings_populate_entries(rgui_handle_t *rgui)
    RGUI_MENU_ITEM("Rotation", RGUI_SETTINGS_VIDEO_ROTATION);
    RGUI_MENU_ITEM("Mute Audio", RGUI_SETTINGS_AUDIO_MUTE);
    RGUI_MENU_ITEM("Audio Control Rate", RGUI_SETTINGS_AUDIO_CONTROL_RATE);
-   RGUI_MENU_ITEM("Zip Extract Directory", RGUI_SETTINGS_ZIP_EXTRACT);
+   RGUI_MENU_ITEM("Audio Resampler", RGUI_SETTINGS_RESAMPLER_TYPE);
    RGUI_MENU_ITEM("SRAM Saves in \"sram\" Dir", RGUI_SETTINGS_SRAM_DIR);
    RGUI_MENU_ITEM("State Saves in \"state\" Dir", RGUI_SETTINGS_STATE_DIR);
    RGUI_MENU_ITEM("Core", RGUI_SETTINGS_CORE);
@@ -1209,17 +1266,27 @@ int rgui_iterate(rgui_handle_t *rgui, rgui_action_t action)
                rgui->directory_ptr = directory_ptr;
                rgui->need_refresh = true;
                rgui_list_pop(rgui->path_stack);
-               msg_queue_push(g_extern.msg_queue, "Change requires restart to take effect", 1, S_DELAY_90);
+
+#ifdef GEKKO
+               snprintf(g_extern.fullpath, sizeof(g_extern.fullpath), "%s/boot.dol", default_paths.core_dir);
+#endif
+               g_extern.lifecycle_mode_state &= ~(1ULL << MODE_GAME);
+               g_extern.lifecycle_mode_state |= (1ULL << MODE_EXIT);
+               g_extern.lifecycle_mode_state |= (1ULL << MODE_EXITSPAWN);
             }
             else
             {
                snprintf(rgui->path_buf, sizeof(rgui->path_buf), "%s/%s", dir, path);
-               console_load_game(rgui->path_buf);
+
+               strlcpy(g_extern.fullpath, rgui->path_buf, sizeof(g_extern.fullpath));
+               g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME);
+
                rmenu_settings_msg(S_MSG_LOADING_ROM, S_DELAY_1);
                rgui->need_refresh = true; // in case of zip extract
                rgui->msg_force = true;
-               ret = -1;
             }
+
+            ret = -1;
          }
          break;
       }

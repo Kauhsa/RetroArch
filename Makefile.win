@@ -30,6 +30,8 @@ OBJ = retroarch.o \
 		gfx/fonts/fonts.o \
 		gfx/fonts/bitmapfont.o \
 		gfx/image.o \
+		audio/hermite.o \
+		audio/resampler.o \
 		performance.o
 
 JOBJ := conf/config_file.o \
@@ -60,6 +62,7 @@ ifeq ($(SLIM),)
    HAVE_SDL_IMAGE = 1
    HAVE_LIBXML2 = 1
    HAVE_FREETYPE = 1
+   HAVE_ZLIB = 1
    HAVE_RSOUND = 1
    HAVE_FBO = 1
    HAVE_CG = 1
@@ -70,7 +73,7 @@ endif
 libretro ?= -lretro
 
 LIBS = -lm
-DEFINES = -I. -DHAVE_SCREENSHOTS -DHAVE_BSV_MOVIE -DPACKAGE_VERSION=\"0.9.8-beta3\"
+DEFINES = -I. -DHAVE_SCREENSHOTS -DHAVE_BSV_MOVIE -DPACKAGE_VERSION=\"0.9.8\"
 LDFLAGS = -L. -static-libgcc
 
 ifeq ($(TDM_GCC),)
@@ -143,6 +146,12 @@ ifeq ($(HAVE_RSOUND), 1)
    LIBS += -lrsound
 endif
 
+ifeq ($(HAVE_ZLIB), 1)
+   OBJ += gfx/rpng/rpng.o file_extract.o
+   LIBS += -lz
+   DEFINES += -DHAVE_ZLIB_DEFLATE
+endif
+
 ifeq ($(HAVE_LIBXML2), 1)
    DEFINES += -Ilibxml2 -DHAVE_LIBXML2 -DHAVE_GLSL
    LIBS += -lxml2 -liconv
@@ -201,8 +210,7 @@ endif
 
 ifeq ($(HAVE_SINC), 1)
    OBJ += audio/sinc.o
-else
-   OBJ += audio/hermite.o
+   DEFINES += -DHAVE_SINC
 endif
 
 ifneq ($(V), 1)
@@ -273,10 +281,10 @@ clean:
 	rm -f tools/*.o
 
 dist_x86: all
-	zip -r retroarch-win32-0.9.8-beta3.zip $(TARGET) $(JTARGET) retroarch.cfg
+	zip -r retroarch-win32-0.9.8.zip $(TARGET) $(JTARGET) retroarch.cfg
 
 dist_x86_64: all
-	zip -r retroarch-win64-0.9.8-beta3.zip $(TARGET) $(JTARGET) retroarch.cfg
+	zip -r retroarch-win64-0.9.8.zip $(TARGET) $(JTARGET) retroarch.cfg
 
 libs_x86:
 	wget https://github.com/downloads/Themaister/RetroArch/RetroArch-win32-libs.zip --no-check-certificate

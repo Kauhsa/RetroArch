@@ -25,6 +25,7 @@
 #include "patch.h"
 #include "compat/strl.h"
 #include "hash.h"
+#include "file_extract.h"
 
 #if defined(_WIN32) && !defined(_XBOX)
 #include <io.h>
@@ -35,6 +36,20 @@
 #define setmode _setmode
 #define INVALID_FILE_ATTRIBUTES -1
 #endif
+
+// Dump stuff to file.
+bool write_file(const char *path, const void *data, size_t size)
+{
+   FILE *file = fopen(path, "wb");
+   if (!file)
+      return false;
+   else
+   {
+      bool ret = fwrite(data, 1, size, file) == size;
+      fclose(file);
+      return ret;
+   }
+}
 
 // Generic file loader.
 ssize_t read_file(const char *path, void **buf)
@@ -278,25 +293,12 @@ static ssize_t read_rom_file(FILE *file, void **buf)
    
    g_extern.cart_crc = crc32_calculate(ret_buf, ret);
    sha256_hash(g_extern.sha256, ret_buf, ret);
-   RARCH_LOG("SHA256 sum: %s\n", g_extern.sha256);
+   RARCH_LOG("CRC32: 0x%x, SHA256: %s\n",
+         (unsigned)g_extern.cart_crc, g_extern.sha256);
    *buf = ret_buf;
    return ret;
 }
 
-
-// Dump stuff to file.
-static bool dump_to_file(const char *path, const void *data, size_t size)
-{
-   FILE *file = fopen(path, "wb");
-   if (!file)
-      return false;
-   else
-   {
-      bool ret = fwrite(data, 1, size, file) == size;
-      fclose(file);
-      return ret;
-   }
-}
 
 static const char *ramtype2str(int type)
 {
@@ -348,7 +350,7 @@ static void dump_to_file_desperate(const void *data, size_t size, int type)
    strlcat(path, timebuf, sizeof(path));
    strlcat(path, ramtype2str(type), sizeof(path));
 
-   if (dump_to_file(path, data, size))
+   if (write_file(path, data, size))
       RARCH_WARN("Succeeded in saving RAM data to \"%s\".\n", path);
    else
       goto error;
@@ -376,7 +378,7 @@ bool save_state(const char *path)
    RARCH_LOG("State size: %d bytes.\n", (int)size);
    bool ret = pretro_serialize(data, size);
    if (ret)
-      ret = dump_to_file(path, data, size);
+      ret = write_file(path, data, size);
 
    if (!ret)
       RARCH_ERR("Failed to save state to \"%s\".\n", path);
@@ -495,7 +497,7 @@ void save_ram_file(const char *path, int type)
 
    if (data && size > 0)
    {
-      if (!dump_to_file(path, data, size))
+      if (!write_file(path, data, size))
       {
          RARCH_ERR("Failed to save SRAM.\n");
          RARCH_WARN("Attempting to recover ...\n");
@@ -533,33 +535,37 @@ static bool load_roms(unsigned rom_type, const char **rom_paths, size_t roms)
    void *rom_buf[MAX_ROMS] = {NULL};
    ssize_t rom_len[MAX_ROMS] = {0};
    struct retro_game_info info[MAX_ROMS] = {{NULL}};
+   char *xml_buf = load_xml_map(g_extern.xml_name);
+
+   FILE *rom_file = NULL;
+   if (rom_paths[0])
+   {
+      RARCH_LOG("Loading ROM file: %s.\n", rom_paths[0]);
+      rom_file = fopen(rom_paths[0], "rb");
+   }
 
    if (!g_extern.system.info.need_fullpath)
    {
-      if ((rom_len[0] = read_rom_file(g_extern.rom_file, &rom_buf[0])) == -1)
+      if ((rom_len[0] = read_rom_file(rom_file, &rom_buf[0])) == -1)
       {
          RARCH_ERR("Could not read ROM file.\n");
-         return false;
+         ret = false;
+         goto end;
       }
-
-      if (g_extern.rom_file)
-         fclose(g_extern.rom_file);
 
       RARCH_LOG("ROM size: %u bytes.\n", (unsigned)rom_len[0]);
    }
    else
    {
-      if (!g_extern.rom_file)
+      if (!rom_file)
       {
          RARCH_ERR("Implementation requires a full path to be set, cannot load ROM from stdin. Aborting ...\n");
-         return false;
+         ret = false;
+         goto end;
       }
 
-      fclose(g_extern.rom_file);
       RARCH_LOG("ROM loading skipped. Implementation will load it on its own.\n");
    }
-
-   char *xml_buf = load_xml_map(g_extern.xml_name);
 
    info[0].path = rom_paths[0];
    info[0].data = rom_buf[0];
@@ -594,6 +600,8 @@ end:
    for (unsigned i = 0; i < MAX_ROMS; i++)
       free(rom_buf[i]);
    free(xml_buf);
+   if (rom_file)
+      fclose(rom_file);
 
    return ret;
 }
@@ -637,6 +645,26 @@ static bool load_sufami_rom(void)
 
 bool init_rom_file(enum rarch_game_type type)
 {
+#ifdef HAVE_ZLIB
+   if (*g_extern.fullpath && !g_extern.system.block_extract)
+   {
+      const char *ext = path_get_extension(g_extern.fullpath);
+      if (ext && !strcasecmp(ext, "zip"))
+      {
+         g_extern.rom_file_temporary = true;
+
+         if (!zlib_extract_first_rom(g_extern.fullpath, sizeof(g_extern.fullpath), g_extern.system.valid_extensions))
+         {
+            RARCH_ERR("Failed to extract ROM from zipped file: %s.\n", g_extern.fullpath);
+            g_extern.rom_file_temporary = false;
+            return false;
+         }
+
+         strlcpy(g_extern.last_rom, g_extern.fullpath, sizeof(g_extern.last_rom));
+      }
+   }
+#endif
+
    switch (type)
    {
       case RARCH_CART_SGB:

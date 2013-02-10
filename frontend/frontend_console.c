@@ -102,54 +102,13 @@ int main(int argc, char *argv[])
 
 #else
 
-void console_load_game(const char *path)
-{
-#ifdef HAVE_ZLIB
-   if ((strstr(path, ".zip") || strstr(path, ".ZIP"))
-         && !g_extern.system.block_extract)
-   {
-      char first_file[PATH_MAX];
-      first_file[0] = '\0';
-
-      rarch_zlib_extract_archive(path, first_file, sizeof(first_file));
-      if(g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
-         rmenu_settings_msg(S_MSG_EXTRACTED_ZIPFILE, S_DELAY_180);
-
-      g_extern.lifecycle_mode_state |= (1ULL << MODE_FILEBROWSER_REFRESH_PENDING);
-
-      if ((g_extern.lifecycle_mode_state & (1ULL << MODE_UNZIP_TO_CURDIR_AND_LOAD_FIRST_FILE)) ||
-            (g_extern.lifecycle_mode_state & (1ULL << MODE_UNZIP_TO_CURDIR_AND_LOAD_FIRST_FILE_AND_CLEAN)))
-      {
-         if (first_file[0] != 0)
-         {
-            RARCH_LOG("Found compatible game, loading it...\n");
-            strlcpy(g_extern.fullpath, first_file, sizeof(g_extern.fullpath));
-
-            if (g_extern.lifecycle_mode_state & (1ULL << MODE_UNZIP_TO_CURDIR_AND_LOAD_FIRST_FILE_AND_CLEAN))
-               g_extern.lifecycle_mode_state |= (1ULL << MODE_UNZIP_DELETE_PENDING);
-
-            goto do_init;
-         }
-         else
-            msg_queue_push(g_extern.msg_queue, "Could not find compatible game, not loading first file.\n", 1, 100);
-      }
-      return;
-   }
-   else
-#endif
-      strlcpy(g_extern.fullpath, path, sizeof(g_extern.fullpath));
-
-do_init:
-   g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME);
-}
-
 static void verbose_log_init(void)
 {
-   if (!g_extern.verbose)
-   {
-      g_extern.verbose = true;
-      RARCH_LOG("Turning on verbose logging...\n");
-   }
+   if (g_extern.verbose)
+      return;
+
+   g_extern.verbose = true;
+   RARCH_LOG("Turning on verbose logging...\n");
 }
 
 #ifdef HAVE_LIBRETRO_MANAGEMENT
@@ -184,8 +143,7 @@ static void get_libretro_core_name(char *name, size_t size)
 
 // If a CORE executable of name CORE.extension exists, rename filename
 // to a more sane name.
-static bool install_libretro_core(const char *core_exe_path, const char *tmp_path,
- const char *libretro_path, const char *config_path, const char *extension)
+static bool install_libretro_core(const char *core_exe_path, const char *tmp_path, const char *extension)
 {
    int ret = 0;
    char tmp_path2[PATH_MAX], tmp_pathnewfile[PATH_MAX];
@@ -289,11 +247,10 @@ int main(int argc, char *argv[])
    snprintf(path_prefix, sizeof(path_prefix), "%s%c", default_paths.core_dir, slash);
    snprintf(core_exe_path, sizeof(core_exe_path), "%sCORE%s", path_prefix, extension);
 
-   RARCH_LOG("core_exe_path: %s\n", core_exe_path);
    if (path_file_exists(core_exe_path))
    {
-      if (install_libretro_core(core_exe_path, path_prefix, path_prefix, 
-               g_extern.config_path, extension))
+      RARCH_LOG("core_exe_path: %s\n", core_exe_path);
+      if (install_libretro_core(core_exe_path, path_prefix, extension))
       {
          RARCH_LOG("New default libretro core saved to config file: %s.\n", g_settings.libretro);
          config_save_file(g_extern.config_path);
@@ -332,11 +289,15 @@ begin_loop:
       struct rarch_main_wrap args = {0};
 
       args.verbose = g_extern.verbose;
-      args.config_path = g_extern.config_path;
       args.sram_path = (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE)) ? g_extern.console.main_wrap.default_sram_dir : NULL;
       args.state_path = (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE)) ? g_extern.console.main_wrap.default_savestate_dir : NULL;
       args.rom_path = g_extern.fullpath;
       args.libretro_path = g_settings.libretro;
+
+      if (path_file_exists(g_extern.config_path))
+         args.config_path = g_extern.config_path;
+      else
+         args.config_path = NULL;
 
       int init_ret = rarch_main_init_wrap(&args);
 
@@ -352,17 +313,6 @@ begin_loop:
          rmenu_settings_msg(S_MSG_ROM_LOADING_ERROR, S_DELAY_180);
       }
       g_extern.lifecycle_mode_state &= ~(1ULL << MODE_INIT);
-#ifdef HAVE_ZLIB
-      if (g_extern.lifecycle_mode_state & (1ULL << MODE_UNZIP_DELETE_PENDING))
-      {
-         int ret = remove(g_extern.fullpath);
-
-         if (ret == 0)
-            RARCH_LOG("Removed temporary unzipped ROM file: [%s].\n", g_extern.fullpath);
-         g_extern.lifecycle_mode_state &= ~(1ULL << MODE_UNZIP_DELETE_PENDING);
-         g_extern.lifecycle_mode_state |= (1ULL << MODE_FILEBROWSER_REFRESH_PENDING);
-      }
-#endif
    }
    else if(g_extern.lifecycle_mode_state & (1ULL << MODE_MENU))
    {

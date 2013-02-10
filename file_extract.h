@@ -1,6 +1,5 @@
 /*  RetroArch - A frontend for libretro.
  *  Copyright (C) 2010-2013 - Hans-Kristian Arntzen
- *  Copyright (C) 2011-2013 - Daniel De Matteis
  * 
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -14,10 +13,13 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef RARCH_ZLIB_H__
-#define RARCH_ZLIB_H__
+#ifndef FILE_EXTRACT_H__
+#define FILE_EXTRACT_H__
 
-int rarch_zlib_extract_archive(const char *zip_path, char *first_file,
-      size_t first_file_size);
+#include "boolean.h"
+#include <stddef.h>
+
+bool zlib_extract_first_rom(char *zip_path, size_t zip_path_size, const char *valid_exts);
 
 #endif
+

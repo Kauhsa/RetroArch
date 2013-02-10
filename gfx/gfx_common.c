@@ -14,91 +14,42 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#if defined(_MSC_VER) && !defined(_XBOX)
-#pragma comment(lib, "winmm")
-#endif
-
 #include "gfx_common.h"
 #include "../general.h"
+#include "../performance.h"
 
-#ifndef _MSC_VER
-#include <sys/time.h>
-#else
-#ifndef _XBOX
-#include <winsock2.h>
-#include <mmsystem.h>
-#endif
-#endif
-
-#if defined(__PSL1GHT__)
-#include <sys/time.h>
-#elif defined(__CELLOS_LV2__)
-#include <sys/sys_time.h>
-#endif
-
-#ifdef GEKKO
-#include <ogc/lwp_watchdog.h>
-#endif
-
-#ifdef __linux__
-#include <unistd.h>
-#include <errno.h>
-#include <sys/wait.h>
-#endif
-
-#if (defined(__CELLOS_LV2__) && !defined(__PSL1GHT__)) || defined(_MSC_VER) || defined(GEKKO)
-static int gettimeofday2(struct timeval *val, void *dummy)
+static float time_to_fps(rarch_time_t last_time, rarch_time_t new_time, int frames)
 {
-   (void)dummy;
-#if defined(_MSC_VER) && !defined(_XBOX360)
-   DWORD msec = timeGetTime();
-#elif defined(_XBOX360)
-   DWORD msec = GetTickCount();
-#endif
-
-#if defined(__CELLOS_LV2__)
-   uint64_t usec = sys_time_get_system_time();
-#elif defined(GEKKO)
-   uint64_t usec = ticks_to_microsecs(gettime());
-#else
-   uint64_t usec = msec * 1000;
-#endif
-
-   val->tv_sec  = usec / 1000000;
-   val->tv_usec = usec % 1000000;
-   return 0;
+   return (1000000.0f * frames) / (new_time - last_time);
 }
 
-// GEKKO has gettimeofday, but it's not accurate enough for calculating FPS, so hack around it
-#define gettimeofday gettimeofday2
-#endif
-
-static float tv_to_fps(const struct timeval *tv, const struct timeval *new_tv, int frames)
-{
-   float time = new_tv->tv_sec - tv->tv_sec + (new_tv->tv_usec - tv->tv_usec) / 1000000.0;
-   return frames/time;
-}
-
+#define FPS_UPDATE_INTERVAL 256
 bool gfx_get_fps(char *buf, size_t size, bool always_write)
 {
-   static struct timeval tv;
+   static rarch_time_t time;
+   static rarch_time_t fps_time;
    static float last_fps;
-   struct timeval new_tv;
    bool ret = false;
 
-   if (g_extern.frame_count == 0)
+   rarch_time_t new_time = rarch_get_time_usec();
+   if (g_extern.frame_count)
    {
-      gettimeofday(&tv, NULL);
+      unsigned write_index = g_extern.measure_data.frame_time_samples_count++ &
+         (MEASURE_FRAME_TIME_SAMPLES_COUNT - 1);
+      g_extern.measure_data.frame_time_samples[write_index] = new_time - fps_time;
+      fps_time = new_time;
+   }
+   else
+   {
+      time = fps_time = new_time;
       snprintf(buf, size, "%s", g_extern.title_buf);
       ret = true;
    }
-   else if ((g_extern.frame_count % 180) == 0)
-   {
-      gettimeofday(&new_tv, NULL);
-      struct timeval tmp_tv = tv;
-      tv = new_tv;
 
-      last_fps = tv_to_fps(&tmp_tv, &new_tv, 180);
+   if ((g_extern.frame_count % FPS_UPDATE_INTERVAL) == 0)
+   {
+      last_fps = time_to_fps(time, new_time, FPS_UPDATE_INTERVAL);
+      time = new_time;
 
 #ifdef RARCH_CONSOLE
       snprintf(buf, size, "FPS: %6.1f || Frames: %d", last_fps, g_extern.frame_count);
@@ -135,7 +86,10 @@ static dylib_t dwmlib = NULL;
 static void gfx_dwm_shutdown(void)
 {
    if (dwmlib)
+   {
       dylib_close(dwmlib);
+      dwmlib = NULL;
+   }
 }
 
 void gfx_set_dwm(void)
@@ -175,4 +129,42 @@ void gfx_set_dwm(void)
       RARCH_ERR("Failed to set composition state ...\n");
 }
 #endif
+
+void gfx_scale_integer(struct rarch_viewport *vp, unsigned width, unsigned height, float aspect_ratio, bool keep_aspect)
+{
+   // Use system reported sizes as these define the geometry for the "normal" case.
+   unsigned base_height = g_extern.system.av_info.geometry.base_height;
+   // Account for non-square pixels.
+   // This is sort of contradictory with the goal of integer scale,
+   // but it is desirable in some cases.
+   // If square pixels are used, base_height will be equal to g_extern.system.av_info.base_height.
+   unsigned base_width = (unsigned)roundf(base_height * aspect_ratio);
+
+   unsigned padding_x = 0;
+   unsigned padding_y = 0;
+
+   // Make sure that we don't get 0x scale ...
+   if (width >= base_width && height >= base_height)
+   {
+      if (keep_aspect) // X/Y scale must be same.
+      {
+         unsigned max_scale = min(width / base_width, height / base_height);
+         padding_x = width - base_width * max_scale;
+         padding_y = height - base_height * max_scale;
+      }
+      else // X/Y can be independent, each scaled as much as possible.
+      {
+         padding_x = width % base_width;
+         padding_y = height % base_height;
+      }
+   }
+
+   width     -= padding_x;
+   height    -= padding_y;
+
+   vp->width  = width;
+   vp->height = height;
+   vp->x      = padding_x >> 1;
+   vp->y      = padding_y >> 1;
+}
 

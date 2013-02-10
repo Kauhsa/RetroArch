@@ -30,10 +30,6 @@
 
 #define EMULATOR_CONTENT_DIR "SSNE10000"
 
-#ifdef HAVE_HDD_CACHE_PARTITION
-#define CACHE_ID "ABCD12345"
-#endif
-
 #ifndef __PSL1GHT__
 #define NP_POOL_SIZE (128*1024)
 static uint8_t np_pool[NP_POOL_SIZE];
@@ -200,7 +196,8 @@ void menu_init (void)
 
 bool rmenu_iterate(void)
 {
-   console_load_game("/dev_hdd0/game/SSNE10000/USRDIR/mm3.nes");
+   strlcpy(g_extern.fullpath, "/dev_hdd0/game/SSNE10000/USRDIR/mm3.nes", sizeof(g_extern.fullpath));
+   g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME);
 
    return false;
 }
@@ -218,18 +215,6 @@ static void get_environment_settings(int argc, char *argv[])
    CellGameContentSize size;
    char dirName[CELL_GAME_DIRNAME_SIZE];
    char contentInfoPath[PATH_MAX];
-
-#ifdef HAVE_HDD_CACHE_PARTITION
-   CellSysCacheParam param;
-   memset(&param, 0x00, sizeof(CellSysCacheParam));
-   strlcpy(param.cacheId,CACHE_ID, sizeof(CellSysCacheParam));
-
-   ret = cellSysCacheMount(&param);
-   if(ret != CELL_SYSCACHE_RET_OK_CLEARED)
-   {
-      RARCH_ERR("System cache partition could not be mounted, it might be already mounted.\n");
-   }
-#endif
 
 #ifdef HAVE_MULTIMAN
    /* not launched from external launcher, set default path */
@@ -297,9 +282,6 @@ static void get_environment_settings(int argc, char *argv[])
          RARCH_LOG("usrDirPath : [%s].\n", default_paths.port_dir);
       }
 
-#ifdef HAVE_HDD_CACHE_PARTITION
-      snprintf(default_paths.cache_dir, sizeof(default_paths.cache_dir), "/dev_hdd1/");
-#endif
       snprintf(default_paths.core_dir, sizeof(default_paths.core_dir), "%s/cores", default_paths.port_dir);
       snprintf(default_paths.executable_extension, sizeof(default_paths.executable_extension), ".SELF");
       snprintf(default_paths.savestate_dir, sizeof(default_paths.savestate_dir), "%s/savestates", default_paths.core_dir);
@@ -311,7 +293,7 @@ static void get_environment_settings(int argc, char *argv[])
 
       /* now we fill in all the variables */
       snprintf(default_paths.border_file, sizeof(default_paths.border_file), "%s/borders/Centered-1080p/mega-man-2.png", default_paths.core_dir);
-      snprintf(default_paths.menu_border_file, sizeof(default_paths.menu_border_file), "%s/borders/Menu/main-menu.png", default_paths.core_dir);
+      snprintf(default_paths.menu_border_file, sizeof(default_paths.menu_border_file), "%s/borders/Menu/main-menu_1080p.png", default_paths.core_dir);
       snprintf(default_paths.cgp_dir, sizeof(default_paths.cgp_dir), "%s/presets", default_paths.core_dir);
       snprintf(default_paths.input_presets_dir, sizeof(default_paths.input_presets_dir), "%s/input", default_paths.cgp_dir);
       snprintf(default_paths.border_dir, sizeof(default_paths.border_dir), "%s/borders", default_paths.core_dir);
@@ -448,15 +430,6 @@ static void system_deinit(void)
    cellSysmoduleUnloadModule(CELL_SYSMODULE_SYSUTIL_GAME);
 #endif
 
-#endif
-
-#ifdef HAVE_HDD_CACHE_PARTITION
-   int ret = cellSysCacheClear();
-
-   if(ret != CELL_SYSCACHE_RET_OK_CLEARED)
-   {
-      RARCH_ERR("System cache partition could not be cleared on exit.\n");
-   }
 #endif
 
 #endif

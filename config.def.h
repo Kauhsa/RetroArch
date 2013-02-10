@@ -224,6 +224,11 @@ static const bool video_smooth = true;
 // On resize and fullscreen, rendering area will stay 4:3
 static const bool force_aspect = true; 
 
+// Only scale in integer steps.
+// The base size depends on system-reported geometry and aspect ratio.
+// If video_force_aspect is not set, X/Y will be integer scaled independently.
+static const bool scale_integer = false;
+
 // Controls aspect ratio handling.
 static const float aspect_ratio = DEFAULT_ASPECT_RATIO; // Automatic
 static const bool aspect_ratio_auto = false; // 1:1 PAR
@@ -248,7 +253,7 @@ static const float message_pos_offset_y = 0.05;
 static const uint32_t message_color = 0xffff00; // RGB hex value.
 
 // Render-to-texture before rendering to screen (multi-pass shaders)
-#if defined(__CELLOS_LV2__) || defined(_XBOX360)
+#if defined(__CELLOS_LV2__)
 static const bool render_to_texture = true;
 #else
 static const bool render_to_texture = false;
@@ -309,6 +314,13 @@ static const int out_latency = 64;
 // Will sync audio. (recommended) 
 static const bool audio_sync = true;
 
+// Default resampler
+#ifdef HAVE_SINC
+static const char *audio_resampler = "sinc";
+#else
+static const char *audio_resampler = "hermite";
+#endif
+
 // Experimental rate control
 #if defined(GEKKO) || !defined(RARCH_CONSOLE)
 static const bool rate_control = true;
@@ -317,11 +329,7 @@ static const bool rate_control = false;
 #endif
 
 // Rate control delta. Defines how much rate_control is allowed to adjust input rate.
-#ifdef GEKKO
-static const float rate_control_delta = 0.006;
-#else
 static const float rate_control_delta = 0.005;
-#endif
 
 // Default audio volume in dB. (0.0 dB == unity gain).
 static const float audio_volume = 0.0;
@@ -358,8 +366,9 @@ static const bool savestate_auto_index = false;
 
 // Automatically saves a savestate at the end of RetroArch's lifetime.
 // The path is $SRAM_PATH.auto.
-// RetroArch will automatically load any savestate with this path on startup.
+// RetroArch will automatically load any savestate with this path on startup if savestate_auto_load is set.
 static const bool savestate_auto_save = false;
+static const bool savestate_auto_load = true;
 
 // Slowmotion ratio.
 static const float slowmotion_ratio = 3.0;

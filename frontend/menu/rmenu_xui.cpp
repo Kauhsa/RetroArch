@@ -29,12 +29,26 @@
 
 #include "../../gfx/gfx_context.h"
 
-#include "../../xdk/xdk_d3d.h"
 #include "../../message.h"
 
 #include "../../general.h"
 
+enum {
+   MENU_XUI_ITEM_LOAD_STATE = 0,
+   MENU_XUI_ITEM_SAVE_STATE,
+   MENU_XUI_ITEM_ASPECT_RATIO,
+   MENU_XUI_ITEM_ORIENTATION,
+   MENU_XUI_ITEM_RESIZE_MODE,
+   MENU_XUI_ITEM_FRAME_ADVANCE,
+   MENU_XUI_ITEM_SCREENSHOT_MODE,
+   MENU_XUI_ITEM_RESET,
+   MENU_XUI_ITEM_RETURN_TO_GAME,
+   MENU_XUI_ITEM_QUIT_RARCH,
+};
+
 CRetroArch app;
+CXuiList m_list;
+CXuiTextElement m_list_path;
 HXUIOBJ hCur;
 filebrowser_t *browser;
 filebrowser_t *tmp_browser;
@@ -102,6 +116,29 @@ HRESULT CRetroArch::UnregisterXuiClasses (void)
    return 0;
 }
 
+static void browser_update(filebrowser_t * b, uint64_t input, const char *extensions);
+
+static void filebrowser_fetch_directory_entries(filebrowser_t * browser, uint64_t action)
+{
+   CXuiList *romlist = &m_list;
+   CXuiTextElement *rompath_title = &m_list_path;
+   browser_update(browser, action, browser->extensions); 
+
+   convert_char_to_wchar(strw_buffer, filebrowser_get_current_dir(browser), sizeof(strw_buffer));
+   rompath_title->SetText(strw_buffer);
+
+   romlist->DeleteItems(0, romlist->GetItemCount());
+   romlist->InsertItems(0, browser->current_dir.list->size);
+
+   for(unsigned i = 0; i < browser->current_dir.list->size; i++)
+   {
+      char fname_tmp[256];
+      fill_pathname_base(fname_tmp, browser->current_dir.list->elems[i].data, sizeof(fname_tmp));
+      convert_char_to_wchar(strw_buffer, fname_tmp, sizeof(strw_buffer));
+      romlist->SetText(i, strw_buffer);
+   }
+}
+
 static void browser_update(filebrowser_t * b, uint64_t input, const char *extensions)
 {
    bool ret = true;
@@ -121,11 +158,13 @@ static void browser_update(filebrowser_t * b, uint64_t input, const char *extens
       action = FILEBROWSER_ACTION_SCROLL_UP;
    else if (input & (1ULL << RMENU_DEVICE_NAV_A))
       action = FILEBROWSER_ACTION_CANCEL;
-   else if (input & (1ULL << RMENU_DEVICE_NAV_START))
+   else if (input & (1ULL << RMENU_DEVICE_NAV_SELECT))
    {
       action = FILEBROWSER_ACTION_RESET;
-      filebrowser_set_root(b, default_paths.filesystem_root_dir);
+      filebrowser_set_root_and_ext(b, g_extern.system.valid_extensions,
+            g_extern.console.main_wrap.default_rom_startup_dir);
       strlcpy(b->extensions, extensions, sizeof(b->extensions));
+      filebrowser_fetch_directory_entries(browser, (1ULL << RMENU_DEVICE_NAV_B));
    }
 
    if(action != FILEBROWSER_ACTION_NOOP)
@@ -135,37 +174,17 @@ static void browser_update(filebrowser_t * b, uint64_t input, const char *extens
       rmenu_settings_msg(S_MSG_DIR_LOADING_ERROR, S_DELAY_180);
 }
 
-static void filebrowser_fetch_directory_entries(filebrowser_t * browser, uint64_t action, CXuiList * romlist, CXuiTextElement * rompath_title)
-{
-   browser_update(browser, action, browser->extensions); 
-
-   convert_char_to_wchar(strw_buffer, filebrowser_get_current_dir(browser), sizeof(strw_buffer));
-   rompath_title->SetText(strw_buffer);
-
-   romlist->DeleteItems(0, romlist->GetItemCount());
-   romlist->InsertItems(0, browser->current_dir.list->size);
-
-   for(unsigned i = 0; i < browser->current_dir.list->size; i++)
-   {
-      char fname_tmp[256];
-      fill_pathname_base(fname_tmp, browser->current_dir.list->elems[i].data, sizeof(fname_tmp));
-      convert_char_to_wchar(strw_buffer, fname_tmp, sizeof(strw_buffer));
-      romlist->SetText(i, strw_buffer);
-   }
-}
-
 HRESULT CRetroArchFileBrowser::OnInit(XUIMessageInit * pInitData, BOOL& bHandled)
 {
-   GetChildById(L"XuiRomList", &m_romlist);
+   GetChildById(L"XuiRomList", &m_list);
    GetChildById(L"XuiBackButton1", &m_back);
-   GetChildById(L"XuiTxtRomPath", &m_rompathtitle);
+   GetChildById(L"XuiTxtRomPath", &m_list_path);
    GetChildById(L"XuiBtnGameDir", &m_dir_game);
-   GetChildById(L"XuiBtnCacheDir", &m_dir_cache);
 
    filebrowser_set_root_and_ext(browser, g_extern.system.valid_extensions, default_paths.filebrowser_startup_dir);
 
    uint64_t action = (1ULL << RMENU_DEVICE_NAV_B);
-   filebrowser_fetch_directory_entries(browser, action, &m_romlist, &m_rompathtitle);
+   filebrowser_fetch_directory_entries(browser, action);
 
    return 0;
 }
@@ -175,21 +194,22 @@ HRESULT CRetroArchFileBrowser::OnNotifyPress( HXUIOBJ hObjPressed, BOOL& bHandle
    char path[PATH_MAX];
    process_input_ret = 0;
 
-   if(hObjPressed == m_romlist)
+   if(hObjPressed == m_list)
    {
-      int index = m_romlist.GetCurSel();
-      convert_wchar_to_char(str_buffer, (const wchar_t *)m_romlist.GetText(index), sizeof(str_buffer));
+      int index = m_list.GetCurSel();
+      convert_wchar_to_char(str_buffer, (const wchar_t *)m_list.GetText(index), sizeof(str_buffer));
       if(path_file_exists(browser->current_dir.list->elems[index].data))
       {
          snprintf(path, sizeof(path), "%s\\%s", filebrowser_get_current_dir(browser), str_buffer);
-         console_load_game(path);
+         strlcpy(g_extern.fullpath, path, sizeof(g_extern.fullpath));
+         g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME);
       }
       else if(browser->current_dir.list->elems[index].attr.b)
       {
          snprintf(path, sizeof(path), "%s\\%s", filebrowser_get_current_dir(browser), str_buffer);
          uint64_t action = (1ULL << RMENU_DEVICE_NAV_B);
          filebrowser_set_root_and_ext(browser, g_extern.system.valid_extensions, path);
-         filebrowser_fetch_directory_entries(browser, action, &m_romlist, &m_rompathtitle);
+         filebrowser_fetch_directory_entries(browser, action);
       }
    }
    else if (hObjPressed == m_dir_game)
@@ -197,19 +217,8 @@ HRESULT CRetroArchFileBrowser::OnNotifyPress( HXUIOBJ hObjPressed, BOOL& bHandle
       filebrowser_set_root_and_ext(browser, g_extern.system.valid_extensions,
             g_extern.console.main_wrap.default_rom_startup_dir);
       uint64_t action = (1ULL << RMENU_DEVICE_NAV_B);
-      filebrowser_fetch_directory_entries(browser, action, &m_romlist, &m_rompathtitle);
+      filebrowser_fetch_directory_entries(browser, action);
    }
-#ifdef HAVE_HDD_CACHE_PARTITION
-   else if (hObjPressed == m_dir_cache)
-   {
-      filebrowser_set_root_and_ext(browser, g_extern.system.valid_extensions, "cache:");
-      uint64_t action = (1ULL << RMENU_DEVICE_NAV_B);
-      filebrowser_fetch_directory_entries(browser, action, &m_romlist, &m_rompathtitle);
-
-      if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
-         rmenu_settings_msg(S_MSG_CACHE_PARTITION, S_DELAY_180);
-   }
-#endif
 
    bHandled = TRUE;
 
@@ -386,8 +395,8 @@ HRESULT CRetroArchSettings::OnInit(XUIMessageInit * pInitData, BOOL& bHandled)
    m_settingslist.SetText(SETTING_EMU_REWIND_ENABLED, g_settings.rewind_enable ? L"Rewind: ON" : L"Rewind: OFF");
    m_settingslist.SetText(SETTING_EMU_SHOW_INFO_MSG, (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW)) ? L"Info messages: ON" : L"Info messages: OFF");
    m_settingslist.SetText(SETTING_EMU_SHOW_DEBUG_INFO_MSG, (g_extern.lifecycle_mode_state & (1ULL << MODE_FPS_DRAW)) ? L"Debug Info messages: ON" : L"Debug Info messages: OFF");
-   m_settingslist.SetText(SETTING_EMU_MENUS, (g_extern.lifecycle_mode_state & (1ULL << MODE_MENU_HD)) ? L"Menus: HD" : L"Menus: SD");
    m_settingslist.SetText(SETTING_GAMMA_CORRECTION_ENABLED, g_extern.console.screen.gamma_correction ? L"Gamma correction: ON" : L"Gamma correction: OFF");
+   m_settingslist.SetText(SETTING_AUDIO_RESAMPLER_TYPE, strstr(g_settings.audio.resampler, "sinc") ? L"Audio Resampler: Sinc" : L"Audio Resampler: Hermite");
    m_settingslist.SetText(SETTING_HW_TEXTURE_FILTER, g_settings.video.smooth ? L"Hardware filtering shader #1: Linear interpolation" : L"Hardware filtering shader #1: Point filtering");
    m_settingslist.SetText(SETTING_HW_TEXTURE_FILTER_2, g_settings.video.second_pass_smooth ? L"Hardware filtering shader #2: Linear interpolation" : L"Hardware filtering shader #2: Point filtering");
    m_settingslist.SetText(SETTING_SCALE_ENABLED, g_settings.video.render_to_texture ? L"Custom Scaling/Dual Shaders: ON" : L"Custom Scaling/Dual Shaders: OFF");
@@ -397,8 +406,10 @@ HRESULT CRetroArchSettings::OnInit(XUIMessageInit * pInitData, BOOL& bHandled)
    m_settingslist.SetText(SETTING_SHADER_2, strw_buffer);
    rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_SCALE_FACTOR, sizeof(strw_buffer));
    m_settingslist.SetText(SETTING_SCALE_FACTOR, strw_buffer);
-   rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ZIP_EXTRACT, sizeof(strw_buffer));
-   m_settingslist.SetText(SETTING_ZIP_EXTRACT, strw_buffer);
+   rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_REWIND_GRANULARITY, sizeof(strw_buffer));
+   m_settingslist.SetText(SETTING_EMU_REWIND_GRANULARITY, strw_buffer);
+   m_settingslist.SetText(SETTING_ENABLE_SRAM_PATH, (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE)) ? L"SRAM Path Enable: ON" : L"SRAM Path Enable: OFF");
+   m_settingslist.SetText(SETTING_ENABLE_STATE_PATH, (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE)) ? L"Savestate Path Enable: ON" : L"Savestate Path Enable: OFF");
 
    return 0;
 }
@@ -423,6 +434,26 @@ HRESULT CRetroArchSettings::OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled 
             if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
                rmenu_settings_msg(S_MSG_RESTART_RARCH, S_DELAY_180);
             break;
+	 case SETTING_EMU_REWIND_GRANULARITY:
+	    g_settings.rewind_granularity++;
+
+	    rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_REWIND_GRANULARITY, sizeof(strw_buffer));
+	    m_settingslist.SetText(SETTING_EMU_REWIND_GRANULARITY, strw_buffer);
+	    break;
+     case SETTING_ENABLE_SRAM_PATH:
+        if (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE))
+           g_extern.lifecycle_mode_state &= ~(1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE);
+        else
+           g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE);
+	    m_settingslist.SetText(SETTING_ENABLE_SRAM_PATH, (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE)) ? L"SRAM Path Enable: ON" : L"SRAM Path Enable: OFF");
+        break;
+     case SETTING_ENABLE_STATE_PATH:
+        if (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE))
+           g_extern.lifecycle_mode_state &= ~(1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE);
+        else
+           g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE);
+	    m_settingslist.SetText(SETTING_ENABLE_STATE_PATH, (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE)) ? L"Savestate Path Enable: ON" : L"Savestate Path Enable: OFF");
+        break;
          case SETTING_EMU_SHOW_INFO_MSG:
             if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
                g_extern.lifecycle_mode_state &= ~(1ULL << MODE_INFO_DRAW);
@@ -437,18 +468,29 @@ HRESULT CRetroArchSettings::OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled 
                g_extern.lifecycle_mode_state |= (1ULL << MODE_FPS_DRAW);
             m_settingslist.SetText(SETTING_EMU_SHOW_DEBUG_INFO_MSG, (g_extern.lifecycle_mode_state & (1ULL << MODE_FPS_DRAW)) ? L"Debug Info messages: ON" : L"Debug Info messages: OFF");
             break;
-         case SETTING_EMU_MENUS:
-            if (g_extern.lifecycle_mode_state & (1ULL << MODE_MENU_HD))
-               g_extern.lifecycle_mode_state &= ~(1ULL << MODE_MENU_HD);
+         case SETTING_AUDIO_RESAMPLER_TYPE:
+#ifdef HAVE_SINC
+            if( strstr(g_settings.audio.resampler, "hermite"))
+               snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "sinc");
             else
-               g_extern.lifecycle_mode_state |= (1ULL << MODE_MENU_HD);
-            m_settingslist.SetText(SETTING_EMU_MENUS, (g_extern.lifecycle_mode_state & (1ULL << MODE_MENU_HD)) ? L"Menus: HD" : L"Menus: SD");
+#endif
+               snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "hermite");
+	    m_settingslist.SetText(SETTING_AUDIO_RESAMPLER_TYPE, strstr(g_settings.audio.resampler, "sinc") ? L"Audio Resampler: Sinc" : L"Audio Resampler: Hermite");
+
+            if (g_extern.main_is_init)
+            {
+               if (!rarch_resampler_realloc(&g_extern.audio_data.resampler_data, &g_extern.audio_data.resampler,
+                        g_settings.audio.resampler))
+               {
+                  RARCH_ERR("Failed to initialize resampler \"%s\".\n", g_settings.audio.resampler);
+                  g_extern.audio_active = false;
+               }
+            }
             break;
          case SETTING_GAMMA_CORRECTION_ENABLED:
             g_extern.console.screen.gamma_correction = g_extern.console.screen.gamma_correction ? 0 : 1;
+            driver.video->restart();
             m_settingslist.SetText(SETTING_GAMMA_CORRECTION_ENABLED, g_extern.console.screen.gamma_correction ? L"Gamma correction: ON" : L"Gamma correction: OFF");
-            if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
-               rmenu_settings_msg(S_MSG_RESTART_RARCH, S_DELAY_180);
             break;
          case SETTING_SHADER:
             g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_FIRST_SHADER);
@@ -494,11 +536,6 @@ HRESULT CRetroArchSettings::OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled 
             else
                device_ptr->ctx_driver->set_fbo(FBO_DEINIT);
             break;
-         case SETTING_ZIP_EXTRACT:
-			rmenu_settings_set(S_UNZIP_MODE_INCREMENT);
-            rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ZIP_EXTRACT, sizeof(strw_buffer));
-            m_settingslist.SetText(SETTING_ZIP_EXTRACT, strw_buffer);
-            break;
       }
    }
 
@@ -525,6 +562,27 @@ HRESULT CRetroArchSettings::OnControlNavigate(XUIMessageControlNavigate *pContro
                if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
                   rmenu_settings_msg(S_MSG_RESTART_RARCH, S_DELAY_180);
                break;
+	    case SETTING_EMU_REWIND_GRANULARITY:
+	       if (g_settings.rewind_granularity > 1)
+		       g_settings.rewind_granularity--;
+
+	       rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_REWIND_GRANULARITY, sizeof(strw_buffer));
+	       m_settingslist.SetText(SETTING_EMU_REWIND_GRANULARITY, strw_buffer);
+	       break;
+     case SETTING_ENABLE_SRAM_PATH:
+        if (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE))
+           g_extern.lifecycle_mode_state &= ~(1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE);
+        else
+           g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE);
+	    m_settingslist.SetText(SETTING_ENABLE_SRAM_PATH, (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE)) ? L"SRAM Path Enable: ON" : L"SRAM Path Enable: OFF");
+        break;
+     case SETTING_ENABLE_STATE_PATH:
+        if (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE))
+           g_extern.lifecycle_mode_state &= ~(1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE);
+        else
+           g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE);
+	    m_settingslist.SetText(SETTING_ENABLE_STATE_PATH, (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE)) ? L"Savestate Path Enable: ON" : L"Savestate Path Enable: OFF");
+        break;
             case SETTING_EMU_SHOW_INFO_MSG:
                if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
                   g_extern.lifecycle_mode_state &= ~(1ULL << MODE_INFO_DRAW);
@@ -539,18 +597,29 @@ HRESULT CRetroArchSettings::OnControlNavigate(XUIMessageControlNavigate *pContro
                   g_extern.lifecycle_mode_state |= (1ULL << MODE_FPS_DRAW);
                m_settingslist.SetText(SETTING_EMU_SHOW_DEBUG_INFO_MSG, (g_extern.lifecycle_mode_state & (1ULL << MODE_FPS_DRAW)) ? L"Debug Info messages: ON" : L"Debug Info messages: OFF");
                break;
-            case SETTING_EMU_MENUS:
-               if (g_extern.lifecycle_mode_state & (1ULL << MODE_MENU_HD))
-                  g_extern.lifecycle_mode_state &= ~(1ULL << MODE_MENU_HD);
+            case SETTING_AUDIO_RESAMPLER_TYPE:
+#ifdef HAVE_SINC
+               if( strstr(g_settings.audio.resampler, "hermite"))
+                  snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "sinc");
                else
-                  g_extern.lifecycle_mode_state |= (1ULL << MODE_MENU_HD);
-               m_settingslist.SetText(SETTING_EMU_MENUS, (g_extern.lifecycle_mode_state & (1ULL << MODE_MENU_HD)) ? L"Menus: HD" : L"Menus: SD");
+#endif
+                  snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "hermite");
+	       m_settingslist.SetText(SETTING_AUDIO_RESAMPLER_TYPE, strstr(g_settings.audio.resampler, "sinc") ? L"Audio Resampler: Sinc" : L"Audio Resampler: Hermite");
+
+               if (g_extern.main_is_init)
+               {
+                  if (!rarch_resampler_realloc(&g_extern.audio_data.resampler_data, &g_extern.audio_data.resampler,
+                           g_settings.audio.resampler))
+                  {
+                     RARCH_ERR("Failed to initialize resampler \"%s\".\n", g_settings.audio.resampler);
+                     g_extern.audio_active = false;
+                  }
+               }
                break;
             case SETTING_GAMMA_CORRECTION_ENABLED:
                g_extern.console.screen.gamma_correction = g_extern.console.screen.gamma_correction ? 0 : 1;
+               driver.video->restart();
                m_settingslist.SetText(SETTING_GAMMA_CORRECTION_ENABLED, g_extern.console.screen.gamma_correction ? L"Gamma correction: ON" : L"Gamma correction: OFF");
-               if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
-                  rmenu_settings_msg(S_MSG_RESTART_RARCH, S_DELAY_180);
                break;
             case SETTING_SCALE_FACTOR:
                if(device_ptr->fbo_inited)
@@ -563,11 +632,6 @@ HRESULT CRetroArchSettings::OnControlNavigate(XUIMessageControlNavigate *pContro
                      m_settingslist.SetText(SETTING_SCALE_FACTOR, strw_buffer);
                   }
                }
-               break;
-            case SETTING_ZIP_EXTRACT:
-               rmenu_settings_set(S_UNZIP_MODE_DECREMENT);
-               rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ZIP_EXTRACT, sizeof(strw_buffer));
-               m_settingslist.SetText(SETTING_ZIP_EXTRACT, strw_buffer);
                break;
             case SETTING_HW_TEXTURE_FILTER:
                g_settings.video.smooth = !g_settings.video.smooth;
@@ -606,18 +670,29 @@ HRESULT CRetroArchSettings::OnControlNavigate(XUIMessageControlNavigate *pContro
                   g_extern.lifecycle_mode_state |= (1ULL << MODE_FPS_DRAW);
                m_settingslist.SetText(SETTING_EMU_SHOW_DEBUG_INFO_MSG, (g_extern.lifecycle_mode_state & (1ULL << MODE_FPS_DRAW)) ? L"Debug Info messages: ON" : L"Debug Info messages: OFF");
                break;
-            case SETTING_EMU_MENUS:
-               if (g_extern.lifecycle_mode_state & (1ULL << MODE_MENU_HD))
-                  g_extern.lifecycle_mode_state &= ~(1ULL << MODE_MENU_HD);
+            case SETTING_AUDIO_RESAMPLER_TYPE:
+#ifdef HAVE_SINC
+               if( strstr(g_settings.audio.resampler, "hermite"))
+                  snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "sinc");
                else
-                  g_extern.lifecycle_mode_state |= (1ULL << MODE_MENU_HD);
-               m_settingslist.SetText(SETTING_EMU_MENUS, (g_extern.lifecycle_mode_state & (1ULL << MODE_MENU_HD)) ? L"Menus: HD" : L"Menus: SD");
+#endif
+                  snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "hermite");
+	       m_settingslist.SetText(SETTING_AUDIO_RESAMPLER_TYPE, strstr(g_settings.audio.resampler, "sinc") ? L"Audio Resampler: Sinc" : L"Audio Resampler: Hermite");
+
+               if (g_extern.main_is_init)
+               {
+                  if (!rarch_resampler_realloc(&g_extern.audio_data.resampler_data, &g_extern.audio_data.resampler,
+                           g_settings.audio.resampler))
+                  {
+                     RARCH_ERR("Failed to initialize resampler \"%s\".\n", g_settings.audio.resampler);
+                     g_extern.audio_active = false;
+                  }
+               }
                break;
             case SETTING_GAMMA_CORRECTION_ENABLED:
                g_extern.console.screen.gamma_correction = g_extern.console.screen.gamma_correction ? 0 : 1;
+               driver.video->restart();
                m_settingslist.SetText(SETTING_GAMMA_CORRECTION_ENABLED, g_extern.console.screen.gamma_correction ? L"Gamma correction: ON" : L"Gamma correction: OFF");
-               if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
-                  rmenu_settings_msg(S_MSG_RESTART_RARCH, S_DELAY_180);
                break;
             case SETTING_EMU_REWIND_ENABLED:
                rmenu_settings_set(S_REWIND);
@@ -626,6 +701,26 @@ HRESULT CRetroArchSettings::OnControlNavigate(XUIMessageControlNavigate *pContro
                if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
                   rmenu_settings_msg(S_MSG_RESTART_RARCH, S_DELAY_180);
                break;
+	    case SETTING_EMU_REWIND_GRANULARITY:
+	       g_settings.rewind_granularity++;
+
+	       rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_REWIND_GRANULARITY, sizeof(strw_buffer));
+	       m_settingslist.SetText(SETTING_EMU_REWIND_GRANULARITY, strw_buffer);
+	       break;
+     case SETTING_ENABLE_SRAM_PATH:
+        if (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE))
+           g_extern.lifecycle_mode_state &= ~(1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE);
+        else
+           g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE);
+	    m_settingslist.SetText(SETTING_ENABLE_SRAM_PATH, (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_SRAM_DIR_ENABLE)) ? L"SRAM Path Enable: ON" : L"SRAM Path Enable: OFF");
+        break;
+     case SETTING_ENABLE_STATE_PATH:
+        if (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE))
+           g_extern.lifecycle_mode_state &= ~(1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE);
+        else
+           g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE);
+	    m_settingslist.SetText(SETTING_ENABLE_STATE_PATH, (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_GAME_STATE_DIR_ENABLE)) ? L"Savestate Path Enable: ON" : L"Savestate Path Enable: OFF");
+        break;
             case SETTING_SCALE_FACTOR:
                if(device_ptr->fbo_inited)
                {
@@ -637,11 +732,6 @@ HRESULT CRetroArchSettings::OnControlNavigate(XUIMessageControlNavigate *pContro
                      m_settingslist.SetText(SETTING_SCALE_FACTOR, strw_buffer);
                   }
                }
-               break;
-            case SETTING_ZIP_EXTRACT:
-               rmenu_settings_set(S_UNZIP_MODE_INCREMENT);
-               rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ZIP_EXTRACT, sizeof(strw_buffer));
-               m_settingslist.SetText(SETTING_ZIP_EXTRACT, strw_buffer);
                break;
             case SETTING_HW_TEXTURE_FILTER:
                g_settings.video.smooth = !g_settings.video.smooth;
@@ -692,16 +782,16 @@ HRESULT CRetroArchQuickMenu::OnInit(XUIMessageInit * pInitData, BOOL& bHandled)
    GetChildById(L"XuiBackButton", &m_back);
 
    rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ROTATION, sizeof(strw_buffer));
-   m_quickmenulist.SetText(MENU_ITEM_ORIENTATION, strw_buffer);
+   m_quickmenulist.SetText(MENU_XUI_ITEM_ORIENTATION, strw_buffer);
 
    rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ASPECT_RATIO, sizeof(strw_buffer));
-   m_quickmenulist.SetText(MENU_ITEM_KEEP_ASPECT_RATIO, strw_buffer);
+   m_quickmenulist.SetText(MENU_XUI_ITEM_ASPECT_RATIO, strw_buffer);
 
    rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_LOAD_STATE_SLOT, sizeof(strw_buffer));
-   m_quickmenulist.SetText(MENU_ITEM_LOAD_STATE, strw_buffer);
+   m_quickmenulist.SetText(MENU_XUI_ITEM_LOAD_STATE, strw_buffer);
 
    rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_SAVE_STATE_SLOT, sizeof(strw_buffer));
-   m_quickmenulist.SetText(MENU_ITEM_SAVE_STATE, strw_buffer);
+   m_quickmenulist.SetText(MENU_XUI_ITEM_SAVE_STATE, strw_buffer);
 
    return 0;
 }
@@ -718,22 +808,22 @@ HRESULT CRetroArchQuickMenu::OnControlNavigate(XUIMessageControlNavigate *pContr
       case XUI_CONTROL_NAVIGATE_LEFT:
          switch(current_index)
          {
-            case MENU_ITEM_LOAD_STATE:
-            case MENU_ITEM_SAVE_STATE:
+            case MENU_XUI_ITEM_LOAD_STATE:
+            case MENU_XUI_ITEM_SAVE_STATE:
                rarch_state_slot_decrease();
                rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_LOAD_STATE_SLOT, sizeof(strw_buffer));
-               m_quickmenulist.SetText(MENU_ITEM_LOAD_STATE, strw_buffer);
+               m_quickmenulist.SetText(MENU_XUI_ITEM_LOAD_STATE, strw_buffer);
                rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_SAVE_STATE_SLOT, sizeof(strw_buffer));
-               m_quickmenulist.SetText(MENU_ITEM_SAVE_STATE, strw_buffer);
+               m_quickmenulist.SetText(MENU_XUI_ITEM_SAVE_STATE, strw_buffer);
                break;
-            case MENU_ITEM_KEEP_ASPECT_RATIO:
+            case MENU_XUI_ITEM_ASPECT_RATIO:
                rmenu_settings_set(S_ASPECT_RATIO_DECREMENT);
                aspectratio_changed = true;
                break;
-            case MENU_ITEM_ORIENTATION:
+            case MENU_XUI_ITEM_ORIENTATION:
                rmenu_settings_set(S_ROTATION_DECREMENT);
                rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ROTATION, sizeof(strw_buffer));
-               m_quickmenulist.SetText(MENU_ITEM_ORIENTATION, strw_buffer);
+               m_quickmenulist.SetText(MENU_XUI_ITEM_ORIENTATION, strw_buffer);
                driver.video->set_rotation(driver.video_data, g_extern.console.screen.orientation);
                break;
             default:
@@ -743,22 +833,22 @@ HRESULT CRetroArchQuickMenu::OnControlNavigate(XUIMessageControlNavigate *pContr
       case XUI_CONTROL_NAVIGATE_RIGHT:
          switch(current_index)
          {
-            case MENU_ITEM_LOAD_STATE:
-            case MENU_ITEM_SAVE_STATE:
+            case MENU_XUI_ITEM_LOAD_STATE:
+            case MENU_XUI_ITEM_SAVE_STATE:
                rarch_state_slot_increase();
                rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_LOAD_STATE_SLOT, sizeof(strw_buffer));
-               m_quickmenulist.SetText(MENU_ITEM_LOAD_STATE, strw_buffer);
+               m_quickmenulist.SetText(MENU_XUI_ITEM_LOAD_STATE, strw_buffer);
                rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_SAVE_STATE_SLOT, sizeof(strw_buffer));
-               m_quickmenulist.SetText(MENU_ITEM_SAVE_STATE, strw_buffer);
+               m_quickmenulist.SetText(MENU_XUI_ITEM_SAVE_STATE, strw_buffer);
                break;
-            case MENU_ITEM_KEEP_ASPECT_RATIO:
+            case MENU_XUI_ITEM_ASPECT_RATIO:
                rmenu_settings_set(S_ASPECT_RATIO_INCREMENT);
                aspectratio_changed = true;
                break;
-            case MENU_ITEM_ORIENTATION:
+            case MENU_XUI_ITEM_ORIENTATION:
                rmenu_settings_set(S_ROTATION_INCREMENT);
                rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ROTATION, sizeof(strw_buffer));
-               m_quickmenulist.SetText(MENU_ITEM_ORIENTATION, strw_buffer);
+               m_quickmenulist.SetText(MENU_XUI_ITEM_ORIENTATION, strw_buffer);
                driver.video->set_rotation(driver.video_data, g_extern.console.screen.orientation);
                break;
             default:
@@ -774,7 +864,7 @@ HRESULT CRetroArchQuickMenu::OnControlNavigate(XUIMessageControlNavigate *pContr
    {
       driver.video->set_aspect_ratio(driver.video_data, g_settings.video.aspect_ratio_idx);
       rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ASPECT_RATIO, sizeof(strw_buffer));
-      m_quickmenulist.SetText(MENU_ITEM_KEEP_ASPECT_RATIO, strw_buffer);
+      m_quickmenulist.SetText(MENU_XUI_ITEM_ASPECT_RATIO, strw_buffer);
    }
 
    bHandled = TRUE;
@@ -806,7 +896,7 @@ HRESULT CRetroArchQuickMenu::OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled
 
       switch(current_index)
       {
-         case MENU_ITEM_LOAD_STATE:
+         case MENU_XUI_ITEM_LOAD_STATE:
             if (g_extern.main_is_init)
             {
                rarch_load_state();
@@ -814,7 +904,7 @@ HRESULT CRetroArchQuickMenu::OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled
                process_input_ret = -1;
             }
             break;
-         case MENU_ITEM_SAVE_STATE:
+         case MENU_XUI_ITEM_SAVE_STATE:
             if (g_extern.main_is_init)
             {
                rarch_save_state();
@@ -822,29 +912,28 @@ HRESULT CRetroArchQuickMenu::OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled
                process_input_ret = -1;
             }
             break;
-         case MENU_ITEM_KEEP_ASPECT_RATIO:
+         case MENU_XUI_ITEM_ASPECT_RATIO:
             rmenu_settings_set_default(S_DEF_ASPECT_RATIO);
             driver.video->set_aspect_ratio(driver.video_data, g_settings.video.aspect_ratio_idx);
             rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ASPECT_RATIO, sizeof(strw_buffer));
-            m_quickmenulist.SetText(MENU_ITEM_KEEP_ASPECT_RATIO, strw_buffer);
+            m_quickmenulist.SetText(MENU_XUI_ITEM_ASPECT_RATIO, strw_buffer);
             break;
-         case MENU_ITEM_OVERSCAN_AMOUNT:
-            if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
-               rmenu_settings_msg(S_MSG_NOT_IMPLEMENTED, S_DELAY_180);
-            break;
-         case MENU_ITEM_ORIENTATION:
+         case MENU_XUI_ITEM_ORIENTATION:
             rmenu_settings_set_default(S_DEF_ROTATION);
             rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ROTATION, sizeof(strw_buffer));
-            m_quickmenulist.SetText(MENU_ITEM_ORIENTATION, strw_buffer);
+            m_quickmenulist.SetText(MENU_XUI_ITEM_ORIENTATION, strw_buffer);
             driver.video->set_rotation(driver.video_data, g_extern.console.screen.orientation);
             break;
-         case MENU_ITEM_RESIZE_MODE:
+         case MENU_XUI_ITEM_RESIZE_MODE:
             input_loop = INPUT_LOOP_RESIZE_MODE;
+            g_settings.video.aspect_ratio_idx = ASPECT_RATIO_CUSTOM;
+            rmenu_settings_create_menu_item_label_w(strw_buffer, S_LBL_ASPECT_RATIO, sizeof(strw_buffer));
+            m_quickmenulist.SetText(MENU_XUI_ITEM_ASPECT_RATIO, strw_buffer);
 
             if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
                rmenu_settings_msg(S_MSG_RESIZE_SCREEN, S_DELAY_270);
             break;
-         case MENU_ITEM_FRAME_ADVANCE:
+         case MENU_XUI_ITEM_FRAME_ADVANCE:
             if (g_extern.main_is_init)
             {
                g_extern.lifecycle_state |= (1ULL << RARCH_FRAMEADVANCE);
@@ -852,11 +941,11 @@ HRESULT CRetroArchQuickMenu::OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled
                process_input_ret = -1;
             }
             break;
-         case MENU_ITEM_SCREENSHOT_MODE:
+         case MENU_XUI_ITEM_SCREENSHOT_MODE:
             if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
                device_ptr->ctx_driver->rmenu_screenshot_dump(NULL);
             break;
-         case MENU_ITEM_RESET:
+         case MENU_XUI_ITEM_RESET:
             if (g_extern.main_is_init)
             {
                rarch_game_reset();
@@ -864,14 +953,14 @@ HRESULT CRetroArchQuickMenu::OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled
                process_input_ret = -1;
             }
             break;
-         case MENU_ITEM_RETURN_TO_GAME:
+         case MENU_XUI_ITEM_RETURN_TO_GAME:
             if (g_extern.main_is_init)
             {
                g_extern.lifecycle_mode_state |= (1ULL << MODE_GAME);
                process_input_ret = -1;
             }
             break;
-         case MENU_ITEM_QUIT_RARCH:
+         case MENU_XUI_ITEM_QUIT_RARCH:
             g_extern.lifecycle_mode_state &= ~(1ULL << MODE_GAME);
             g_extern.lifecycle_mode_state |= (1ULL << MODE_EXIT);
             process_input_ret = -1;
@@ -886,13 +975,13 @@ HRESULT CRetroArchQuickMenu::OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled
 
 HRESULT CRetroArchShaderBrowser::OnInit(XUIMessageInit * pInitData, BOOL& bHandled)
 {
-   GetChildById(L"XuiRomList", &m_shaderlist);
+   GetChildById(L"XuiRomList", &m_list);
    GetChildById(L"XuiBackButton1", &m_back);
-   GetChildById(L"XuiTxtRomPath", &m_shaderpathtitle);
+   GetChildById(L"XuiTxtRomPath", &m_list_path);
 
    filebrowser_set_root_and_ext(tmp_browser, "cg|CG", "game:\\media\\shaders");
    uint64_t action = (1ULL << RMENU_DEVICE_NAV_B);
-   filebrowser_fetch_directory_entries(tmp_browser, action, &m_shaderlist, &m_shaderpathtitle);
+   filebrowser_fetch_directory_entries(tmp_browser, action);
 
    return 0;
 }
@@ -902,12 +991,12 @@ HRESULT CRetroArchShaderBrowser::OnNotifyPress( HXUIOBJ hObjPressed, BOOL& bHand
    char path[PATH_MAX];
    process_input_ret = 0;
 
-   if(hObjPressed == m_shaderlist)
+   if(hObjPressed == m_list)
    {
-      int index = m_shaderlist.GetCurSel();
+      int index = m_list.GetCurSel();
       if(path_file_exists(tmp_browser->current_dir.list->elems[index].data))
       {
-         convert_wchar_to_char(str_buffer, (const wchar_t *)m_shaderlist.GetText(index), sizeof(str_buffer));
+         convert_wchar_to_char(str_buffer, (const wchar_t *)m_list.GetText(index), sizeof(str_buffer));
 
          if (g_extern.lifecycle_mode_state & (1ULL << MODE_LOAD_FIRST_SHADER))
          {
@@ -917,6 +1006,7 @@ HRESULT CRetroArchShaderBrowser::OnNotifyPress( HXUIOBJ hObjPressed, BOOL& bHand
                   driver.video->set_shader(driver.video_data, (enum rarch_shader_type)g_settings.video.shader_type, g_settings.video.cg_shader_path, RARCH_SHADER_INDEX_PASS0);
                   if (g_extern.lifecycle_mode_state & (1ULL << MODE_INFO_DRAW))
                      rmenu_settings_msg(S_MSG_SHADER_LOADING_SUCCEEDED, S_DELAY_180);
+                  XuiSceneNavigateBack(hCur, app.hMainScene, XUSER_INDEX_ANY);
                }
                else
                   RARCH_ERR("Shaders are unsupported on this platform.\n");
@@ -939,11 +1029,11 @@ HRESULT CRetroArchShaderBrowser::OnNotifyPress( HXUIOBJ hObjPressed, BOOL& bHand
       }
       else if(tmp_browser->current_dir.list->elems[index].attr.b)
       {
-         convert_wchar_to_char(str_buffer, (const wchar_t *)m_shaderlist.GetText(index), sizeof(str_buffer));
+         convert_wchar_to_char(str_buffer, (const wchar_t *)m_list.GetText(index), sizeof(str_buffer));
          snprintf(path, sizeof(path), "%s\\%s", filebrowser_get_current_dir(tmp_browser), str_buffer);
          filebrowser_set_root_and_ext(tmp_browser, "cg|CG", path);
          uint64_t action = (1ULL << RMENU_DEVICE_NAV_B);
-         filebrowser_fetch_directory_entries(tmp_browser, action, &m_shaderlist, &m_shaderpathtitle);
+         filebrowser_fetch_directory_entries(tmp_browser, action);
       }
    }
 
@@ -954,13 +1044,13 @@ HRESULT CRetroArchShaderBrowser::OnNotifyPress( HXUIOBJ hObjPressed, BOOL& bHand
 
 HRESULT CRetroArchCoreBrowser::OnInit(XUIMessageInit * pInitData, BOOL& bHandled)
 {
-   GetChildById(L"XuiRomList", &m_romlist);
+   GetChildById(L"XuiRomList", &m_list);
    GetChildById(L"XuiBackButton1", &m_back);
-   GetChildById(L"XuiTxtRomPath", &m_rompathtitle);
+   GetChildById(L"XuiTxtRomPath", &m_list_path);
 
    filebrowser_set_root_and_ext(tmp_browser, "xex|XEX", "game:");
    uint64_t action = (1ULL << RMENU_DEVICE_NAV_B);
-   filebrowser_fetch_directory_entries(tmp_browser, action, &m_romlist, &m_rompathtitle);
+   filebrowser_fetch_directory_entries(tmp_browser, action);
 
    return 0;
 }
@@ -971,10 +1061,10 @@ HRESULT CRetroArchCoreBrowser::OnNotifyPress( HXUIOBJ hObjPressed, BOOL& bHandle
 
    process_input_ret = 0;
 
-   if(hObjPressed == m_romlist)
+   if(hObjPressed == m_list)
    {
-      int index = m_romlist.GetCurSel();
-      convert_wchar_to_char(str_buffer, (const wchar_t *)m_romlist.GetText(index), sizeof(str_buffer));
+      int index = m_list.GetCurSel();
+      convert_wchar_to_char(str_buffer, (const wchar_t *)m_list.GetText(index), sizeof(str_buffer));
       if(path_file_exists(tmp_browser->current_dir.list->elems[index].data))
       {
          snprintf(g_extern.fullpath, sizeof(g_extern.fullpath), "%s\\%s", filebrowser_get_current_dir(tmp_browser), str_buffer);
@@ -987,7 +1077,7 @@ HRESULT CRetroArchCoreBrowser::OnNotifyPress( HXUIOBJ hObjPressed, BOOL& bHandle
          snprintf(path, sizeof(path), "%s\\%s", filebrowser_get_current_dir(tmp_browser), str_buffer);
          filebrowser_set_root_and_ext(tmp_browser, "xex|XEX", path);
          uint64_t action = (1ULL << RMENU_DEVICE_NAV_B);
-         filebrowser_fetch_directory_entries(tmp_browser, action, &m_romlist, &m_rompathtitle);
+         filebrowser_fetch_directory_entries(tmp_browser, action);
       }
    }
 

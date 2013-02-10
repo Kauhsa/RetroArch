@@ -22,6 +22,10 @@
 #define AKEY_EVENT_NO_ACTION 255
 
 enum {
+   ICADE_PROFILE_RED_SAMURAI = 0,
+} icade_profile_enums;
+
+enum {
    AKEYCODE_META_FUNCTION_ON = 8,
    AKEYCODE_ESCAPE          = 111,
    AKEYCODE_CAPS_LOCK       = 115,
@@ -62,6 +66,8 @@ enum {
 
 extern uint64_t keycode_lut[LAST_KEYCODE];
 extern bool volume_enable;
+extern int zeus_id;
+extern int zeus_second_id;
 
 void input_autodetect_init (void);
 void input_autodetect_setup (void *data, char *msg, size_t sizeof_msg, unsigned port, unsigned id, int source);

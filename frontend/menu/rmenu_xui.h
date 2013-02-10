@@ -23,9 +23,10 @@
 enum
 {
    SETTING_EMU_REWIND_ENABLED = 0,
+   SETTING_EMU_REWIND_GRANULARITY,
    SETTING_EMU_SHOW_INFO_MSG,
    SETTING_EMU_SHOW_DEBUG_INFO_MSG,
-   SETTING_EMU_MENUS,
+   SETTING_AUDIO_RESAMPLER_TYPE,
    SETTING_GAMMA_CORRECTION_ENABLED,
    SETTING_SHADER,
    SETTING_SHADER_2,
@@ -33,7 +34,8 @@ enum
    SETTING_HW_TEXTURE_FILTER_2,
    SETTING_SCALE_ENABLED,
    SETTING_SCALE_FACTOR,
-   SETTING_ZIP_EXTRACT,
+   SETTING_ENABLE_SRAM_PATH,
+   SETTING_ENABLE_STATE_PATH,
 };
 
 enum
@@ -108,11 +110,8 @@ class CRetroArchMain: public CXuiSceneImpl
 class CRetroArchFileBrowser: public CXuiSceneImpl
 {
    protected:
-      CXuiList m_romlist;
       CXuiControl m_back;
       CXuiControl m_dir_game;
-      CXuiControl m_dir_cache;
-      CXuiTextElement m_rompathtitle;
    public:
       HRESULT OnInit( XUIMessageInit* pInitData, int & bHandled );
       HRESULT OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled );
@@ -128,9 +127,7 @@ class CRetroArchFileBrowser: public CXuiSceneImpl
 class CRetroArchCoreBrowser: public CXuiSceneImpl
 {
    protected:
-      CXuiList m_romlist;
       CXuiControl m_back;
-      CXuiTextElement m_rompathtitle;
    public:
       HRESULT OnInit( XUIMessageInit* pInitData, int & bHandled );
       HRESULT OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled );
@@ -146,9 +143,7 @@ class CRetroArchCoreBrowser: public CXuiSceneImpl
 class CRetroArchShaderBrowser: public CXuiSceneImpl
 {
    protected:
-      CXuiList m_shaderlist;
       CXuiControl m_back;
-      CXuiTextElement m_shaderpathtitle;
    public:
       HRESULT OnInit( XUIMessageInit* pInitData, int & bHandled );
       HRESULT OnNotifyPress( HXUIOBJ hObjPressed,  int & bHandled );

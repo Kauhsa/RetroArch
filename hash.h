@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "msvc/msvc_compat.h"
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -27,7 +28,11 @@
 void sha256_hash(char *out, const uint8_t *in, size_t size);
 
 #ifdef HAVE_ZLIB
+#ifdef WANT_RZLIB
 #include "deps/rzlib/zlib.h"
+#else
+#include <zlib.h>
+#endif
 static inline uint32_t crc32_calculate(const uint8_t *data, size_t length)
 {
    return crc32(0, data, length);
@@ -35,7 +40,8 @@ static inline uint32_t crc32_calculate(const uint8_t *data, size_t length)
 
 static inline uint32_t crc32_adjust(uint32_t crc, uint8_t data)
 {
-   return crc32(crc, &data, 1);
+   // zlib and nall have different assumptions on "sign" for this function.
+   return ~crc32(~crc, &data, 1);
 }
 #else
 uint32_t crc32_calculate(const uint8_t *data, size_t length);

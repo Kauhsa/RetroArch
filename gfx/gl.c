@@ -53,6 +53,10 @@
 #define FPS_COUNTER
 #endif
 
+#ifdef ANDROID
+#include "../frontend/frontend_android.h"
+#endif
+
 // Used for the last pass when rendering to the back buffer.
 const GLfloat vertexes_flipped[] = {
    0, 1,
@@ -664,16 +668,19 @@ void gl_set_viewport(void *data, unsigned width, unsigned height, bool force_ful
    unsigned x = 0, y = 0;
    struct gl_ortho ortho = {0, 1, 0, 1, -1, 1};
 
-   if (gl->keep_aspect && !force_full)
+   float device_aspect = 0.0f;
+   if (gl->ctx_driver->translate_aspect)
+      device_aspect = context_translate_aspect_func(width, height);
+   else
+      device_aspect = (float)width / height;
+
+   if (g_settings.video.scale_integer && !force_full)
+   {
+      gfx_scale_integer(&gl->vp, width, height, g_settings.video.aspect_ratio, gl->keep_aspect);
+   }
+   else if (gl->keep_aspect && !force_full)
    {
       float desired_aspect = g_settings.video.aspect_ratio;
-
-      float device_aspect = 0.0f;
-      if (gl->ctx_driver->translate_aspect)
-         device_aspect = context_translate_aspect_func(width, height);
-      else
-         device_aspect = (float)width / height;
-
       float delta;
 
 #ifdef RARCH_CONSOLE
@@ -705,14 +712,26 @@ void gl_set_viewport(void *data, unsigned width, unsigned height, bool force_ful
             height = (unsigned)(2.0 * height * delta);
          }
       }
+
+      gl->vp.x      = x;
+      gl->vp.y      = y;
+      gl->vp.width  = width;
+      gl->vp.height = height;
+   }
+   else
+   {
+      gl->vp.x = gl->vp.y = 0;
+      gl->vp.width = width;
+      gl->vp.height = height;
    }
 
-   glViewport(x, y, width, height);
-   gl->vp.x      = x;
-   gl->vp.y      = y;
-   gl->vp.width  = width;
-   gl->vp.height = height;
+#ifdef ANDROID
+   // In portrait mode, we want viewport to gravitate to top of screen.
+   if (device_aspect < 1.0f)
+      gl->vp.y *= 2;
+#endif
 
+   glViewport(gl->vp.x, gl->vp.y, gl->vp.width, gl->vp.height);
    gl_set_projection(gl, &ortho, allow_rotate);
 
    // Set last backbuffer viewport.
@@ -1811,6 +1830,11 @@ static void gl_viewport_info(void *data, struct rarch_viewport *vp)
    *vp = gl->vp;
    vp->full_width  = gl->win_width;
    vp->full_height = gl->win_height;
+
+   // Adjust as GL viewport is bottom-up.
+   unsigned top_y = vp->y + vp->height;
+   unsigned top_dist = gl->win_height - top_y;
+   vp->y = top_dist;
 }
 
 static bool gl_read_viewport(void *data, uint8_t *buffer)
@@ -1971,6 +1995,7 @@ static bool gl_overlay_load(void *data, const uint32_t *image, unsigned width, u
 
    gl_overlay_tex_geom(gl, 0, 0, 1, 1); // Default. Stretch to whole screen.
    gl_overlay_vertex_geom(gl, 0, 0, 1, 1);
+
    return true;
 }
 
@@ -2014,16 +2039,31 @@ static void gl_overlay_full_screen(void *data, bool enable)
    gl->overlay_full_screen = enable;
 }
 
+static void gl_overlay_set_alpha(void *data, float mod)
+{
+   gl_t *gl = (gl_t*)data;
+   gl->overlay_alpha_mod = mod;
+}
+
 static void gl_render_overlay(void *data)
 {
    gl_t *gl = (gl_t*)data;
 
    glBindTexture(GL_TEXTURE_2D, gl->tex_overlay);
 
+   const GLfloat white_color_mod[16] = {
+      1.0f, 1.0f, 1.0f, gl->overlay_alpha_mod,
+      1.0f, 1.0f, 1.0f, gl->overlay_alpha_mod,
+      1.0f, 1.0f, 1.0f, gl->overlay_alpha_mod,
+      1.0f, 1.0f, 1.0f, gl->overlay_alpha_mod,
+   };
+
    gl_shader_use_func(gl, 0);
    glEnable(GL_BLEND);
    gl->coords.vertex    = gl->overlay_vertex_coord;
    gl->coords.tex_coord = gl->overlay_tex_coord;
+   gl->coords.color     = white_color_mod;
+
    gl_shader_set_coords_func(gl, &gl->coords, &gl->mvp_no_rot);
 
    if (gl->overlay_full_screen)
@@ -2039,6 +2079,7 @@ static void gl_render_overlay(void *data)
 
    gl->coords.vertex    = vertex_ptr;
    gl->coords.tex_coord = gl->tex_coords;
+   gl->coords.color     = white_color;
 }
 
 static const video_overlay_interface_t gl_overlay_interface = {
@@ -2047,6 +2088,7 @@ static const video_overlay_interface_t gl_overlay_interface = {
    gl_overlay_tex_geom,
    gl_overlay_vertex_geom,
    gl_overlay_full_screen,
+   gl_overlay_set_alpha,
 };
 
 static void gl_get_overlay_interface(void *data, const video_overlay_interface_t **iface)

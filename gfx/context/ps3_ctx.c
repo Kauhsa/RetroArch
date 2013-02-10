@@ -16,6 +16,7 @@
 
 #include "../../driver.h"
 #include "../../ps3/sdk_defines.h"
+#include "../../console/rarch_console.h"
 
 #ifndef __PSL1GHT__
 #include <sys/spu_initialize.h>
@@ -43,7 +44,6 @@
 
 #if defined(HAVE_RMENU)
 GLuint menu_texture_id;
-static struct texture_image menu_texture;
 #endif
 
 #if defined(HAVE_PSGL)
@@ -294,26 +294,21 @@ static void gfx_ctx_set_blend(bool enable)
 
 static void gfx_ctx_set_resize(unsigned width, unsigned height) { }
 
-bool menu_bg_inited = false;
-
-static bool gfx_ctx_rmenu_init(void)
+void texture_image_border_load(const char *path)
 {
    gl_t *gl = driver.video_data;
 
    if (!gl)
-      return false;
-
-   if (menu_bg_inited)
-      return false;
+      return;
 
 #ifdef HAVE_RMENU
    glGenTextures(1, &menu_texture_id);
 
    RARCH_LOG("Loading texture image for menu...\n");
-   if (!texture_image_load(default_paths.menu_border_file, &menu_texture))
+   if (!texture_image_load(path, &g_extern.console.menu_texture))
    {
       RARCH_ERR("Failed to load texture image for menu.\n");
-      return false;
+      return;
    }
 
    glBindTexture(GL_TEXTURE_2D, menu_texture_id);
@@ -323,15 +318,18 @@ static bool gfx_ctx_rmenu_init(void)
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
    glTexImage2D(GL_TEXTURE_2D, 0, RARCH_GL_INTERNAL_FORMAT32,
-         menu_texture.width, menu_texture.height, 0,
-         RARCH_GL_TEXTURE_TYPE32, RARCH_GL_FORMAT32, menu_texture.pixels);
+         g_extern.console.menu_texture.width, g_extern.console.menu_texture.height, 0,
+         RARCH_GL_TEXTURE_TYPE32, RARCH_GL_FORMAT32, g_extern.console.menu_texture.pixels);
 
    glBindTexture(GL_TEXTURE_2D, gl->texture[gl->tex_index]);
 
-   free(menu_texture.pixels);
-
-   menu_bg_inited = true;
+   free(g_extern.console.menu_texture.pixels);
 #endif
+}
+
+static bool gfx_ctx_rmenu_init(void)
+{
+   texture_image_border_load(g_extern.console.menu_texture_path);
 
    return true;
 }
@@ -339,7 +337,6 @@ static bool gfx_ctx_rmenu_init(void)
 #if defined(HAVE_RMENU)
 static void gfx_ctx_rmenu_free(void)
 {
-   menu_bg_inited = false;
 }
 
 static void gfx_ctx_rmenu_frame(void *data)

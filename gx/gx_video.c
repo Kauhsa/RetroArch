@@ -164,17 +164,19 @@ void gx_set_video_mode(unsigned fbWidth, unsigned lines)
 
    gx_mode.viTVMode = VI_TVMODE(tvmode, modetype);
    gx_mode.fbWidth = fbWidth;
-   gx_mode.efbHeight = lines;
-   gx_mode.xfbHeight = lines;
-   gx_mode.viWidth = viWidth;
-   gx_mode.viHeight = lines * viHeightMultiplier;
-   gx_mode.viXOrigin = (max_width - gx_mode.viWidth) / 2;
+   gx_mode.efbHeight = min(lines, 480);
 
-   if (viHeightMultiplier == 2)
-      gx_mode.viYOrigin = (max_height / 2 - gx_mode.viHeight / 2) / 2;
+   if (modetype == VI_NON_INTERLACE && lines > max_height / 2)
+      gx_mode.xfbHeight = max_height / 2;
+   else if (modetype != VI_NON_INTERLACE && lines > max_height)
+      gx_mode.xfbHeight = max_height;
    else
-      gx_mode.viYOrigin = (max_height - gx_mode.viHeight) / 2;
+      gx_mode.xfbHeight = lines;
 
+   gx_mode.viWidth = viWidth;
+   gx_mode.viHeight = gx_mode.xfbHeight * viHeightMultiplier;
+   gx_mode.viXOrigin = (max_width - gx_mode.viWidth) / 2;
+   gx_mode.viYOrigin = (max_height - gx_mode.viHeight) / (2 * viHeightMultiplier);
    gx_mode.xfbMode = modetype == VI_INTERLACE ? VI_XFBMODE_DF : VI_XFBMODE_SF;
    gx_mode.field_rendering = GX_FALSE;
    gx_mode.aa = GX_FALSE;
@@ -206,7 +208,7 @@ void gx_set_video_mode(unsigned fbWidth, unsigned lines)
    RARCH_LOG("GX Resolution: %dx%d (%s)\n", gx_mode.fbWidth, gx_mode.efbHeight, (gx_mode.viTVMode & 3) == VI_INTERLACE ? "interlaced" : "progressive");
 
    gx->win_width = gx_mode.fbWidth;
-   gx->win_height = gx_mode.efbHeight;
+   gx->win_height = gx_mode.xfbHeight;
    gx->double_strike = (modetype == VI_NON_INTERLACE);
    gx->should_resize = true;
 
@@ -232,10 +234,14 @@ void gx_set_video_mode(unsigned fbWidth, unsigned lines)
    //   VIDEO_WaitVSync();
 
    GX_SetViewport(0, 0, gx_mode.fbWidth, gx_mode.efbHeight, 0, 1);
-   GX_SetDispCopyYScale(GX_GetYScaleFactor(gx_mode.efbHeight, gx_mode.xfbHeight));
    //GX_SetScissor(0, 0, gx_mode.fbWidth, gx_mode.efbHeight);
    GX_SetDispCopySrc(0, 0, gx_mode.fbWidth, gx_mode.efbHeight);
-   GX_SetDispCopyDst(gx_mode.fbWidth, gx_mode.xfbHeight);
+
+   f32 y_scale = GX_GetYScaleFactor(gx_mode.efbHeight, gx_mode.xfbHeight);
+   u16 xfbWidth = VIDEO_PadFramebufferWidth(gx_mode.fbWidth);
+   u16 xfbHeight = GX_SetDispCopyYScale(y_scale);
+   GX_SetDispCopyDst(xfbWidth, xfbHeight);
+
    GX_SetCopyFilter(gx_mode.aa, gx_mode.sample_pattern, (gx_mode.xfbMode == VI_XFBMODE_SF) ? GX_FALSE : GX_TRUE,
          gx_mode.vfilter);
    GX_SetCopyClear((GXColor) { 0, 0, 0, 0xff }, GX_MAX_Z24);
@@ -300,6 +306,8 @@ static void setup_video_mode(void)
 
 static void init_texture(unsigned width, unsigned height)
 {
+   width &= ~3;
+   height &= ~3;
    gx_video_t *gx = (gx_video_t*)driver.video_data;
    unsigned g_filter = g_settings.video.smooth ? GX_LINEAR : GX_NEAR;
 
@@ -469,7 +477,7 @@ static void gx_start(void)
 
    gx_video_t *gx = (gx_video_t*)driver.video_data;
    gx->win_width = gx_mode.fbWidth;
-   gx->win_height = gx_mode.efbHeight;
+   gx->win_height = gx_mode.xfbHeight;
    gx->should_resize = true;
    gx_old_width = gx_old_height = 0;
 }
@@ -616,7 +624,7 @@ static void convert_texture16(const uint32_t *_src, uint32_t *_dst,
    height &= ~3;
    update_texture_asm(_src, _dst, width, height, pitch);
 #else
-   width &= ~15;
+   width &= ~3;
    height &= ~3;
    unsigned tmp_pitch = pitch >> 2;
    unsigned width2 = width >> 1;
@@ -640,7 +648,7 @@ static void convert_texture16(const uint32_t *_src, uint32_t *_dst,
 static void convert_texture16_conv(const uint32_t *_src, uint32_t *_dst,
       unsigned width, unsigned height, unsigned pitch)
 {
-   width &= ~15;
+   width &= ~3;
    height &= ~3;
    unsigned tmp_pitch = pitch >> 2;
    unsigned width2 = width >> 1;
@@ -661,7 +669,7 @@ static void convert_texture16_conv(const uint32_t *_src, uint32_t *_dst,
 static void convert_texture32(const uint32_t *_src, uint32_t *_dst,
       unsigned width, unsigned height, unsigned pitch)
 {
-   width &= ~15;
+   width &= ~3;
    height &= ~3;
    unsigned tmp_pitch = pitch >> 1;
    unsigned width2 = width << 1;
@@ -756,6 +764,8 @@ static void gx_resize(void *data)
       bottom += g_extern.console.screen.overscan_amount / 2;
    }
    guOrtho(m1, top, bottom, left, right, 0, 1);
+   GX_LoadPosMtxImm(m1, GX_PNMTX1);
+
    unsigned degrees;
    switch(g_orientation)
    {
@@ -920,6 +930,7 @@ static bool gx_frame(void *data, const void *frame,
 
    //if (frame)
    {
+      GX_SetCurrentMtx(GX_PNMTX0);
       GX_LoadTexObj(&g_tex.obj, GX_TEXMAP0);
       GX_CallDispList(display_list, display_list_size);
       GX_DrawDone();
@@ -927,6 +938,7 @@ static bool gx_frame(void *data, const void *frame,
 
    if(lifecycle_mode_state & (1ULL << MODE_MENU_DRAW))
    {
+      GX_SetCurrentMtx(GX_PNMTX1);
       GX_LoadTexObj(&menu_tex.obj, GX_TEXMAP0);
       GX_CallDispList(display_list, display_list_size);
       GX_DrawDone();

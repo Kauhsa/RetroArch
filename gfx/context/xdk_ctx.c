@@ -82,10 +82,7 @@ unsigned char drive_mapping_idx = 2;
 
 int xpos, ypos;
 #ifdef _XBOX1
-texture_image m_menuMainRomSelectPanel;
-texture_image m_menuMainBG;
-
-// Rom list coords
+// Rom list coordinates
 unsigned m_menuMainRomListPos_x;
 unsigned m_menuMainRomListPos_y;
 #endif
@@ -144,19 +141,23 @@ static bool gfx_ctx_xdk_menu_init(void)
    // Load background image
    if(width == 640)
    {
-      texture_image_load("D:\\Media\\main-menu_480p.png", &m_menuMainBG);
+      strlcpy(g_extern.console.menu_texture_path,"D:\\Media\\main-menu_480p.png",
+            sizeof(g_extern.console.menu_texture_path));
       m_menuMainRomListPos_x = 60;
       m_menuMainRomListPos_y = 80;
    }
    else if(width == 1280)
    {
-      texture_image_load("D:\\Media\\main-menu_720p.png", &m_menuMainBG);
+      strlcpy(g_extern.console.menu_texture_path, "D:\\Media\\main-menu_720p.png",
+            sizeof(g_extern.console.menu_texture_path));
       m_menuMainRomListPos_x = 360;
       m_menuMainRomListPos_y = 130;
    }
 
+   texture_image_load(g_extern.console.menu_texture_path, &g_extern.console.menu_texture);
+
    // Load rom selector panel
-   texture_image_load("D:\\Media\\menuMainRomSelectPanel.png", &m_menuMainRomSelectPanel);
+   texture_image_load("D:\\Media\\menuMainRomSelectPanel.png", &g_extern.console.menu_panel);
    
    //Display some text
    //Center the text (hardcoded)
@@ -175,8 +176,8 @@ static void gfx_ctx_xdk_menu_frame(void* data)
 static void gfx_ctx_xdk_menu_free(void)
 {
 #ifdef _XBOX1
-   texture_image_free(&m_menuMainBG);
-   texture_image_free(&m_menuMainRomSelectPanel);
+   texture_image_free(&g_extern.console.menu_texture);
+   texture_image_free(&g_extern.console.menu_panel);
 #endif
 }
 
@@ -198,20 +199,20 @@ static bool gfx_ctx_xdk_window_has_focus(void)
 static void gfx_ctx_xdk_menu_draw_bg(rarch_position_t *position)
 {
 #ifdef _XBOX1
-   m_menuMainBG.x = 0;
-   m_menuMainBG.y = 0;
-   texture_image_render(&m_menuMainBG);
+   g_extern.console.menu_texture.x = 0;
+   g_extern.console.menu_texture.y = 0;
+   texture_image_render(&g_extern.console.menu_texture);
 #endif
 }
 
 static void gfx_ctx_xdk_menu_draw_panel(rarch_position_t *position)
 {
 #ifdef _XBOX1
-   m_menuMainRomSelectPanel.x = position->x;
-   m_menuMainRomSelectPanel.y = position->y;
-   m_menuMainRomSelectPanel.width = ROM_PANEL_WIDTH;
-   m_menuMainRomSelectPanel.height = ROM_PANEL_HEIGHT;
-   texture_image_render(&m_menuMainRomSelectPanel);
+   g_extern.console.menu_panel.x = position->x;
+   g_extern.console.menu_panel.y = position->y;
+   g_extern.console.menu_panel.width = ROM_PANEL_WIDTH;
+   g_extern.console.menu_panel.height = ROM_PANEL_HEIGHT;
+   texture_image_render(&g_extern.console.menu_panel);
 #endif
 }
 
@@ -411,8 +412,17 @@ static void gfx_ctx_xdk_destroy(void)
 {
    xdk_d3d_video_t * d3d = (xdk_d3d_video_t*)driver.video_data;
 
-   d3d->d3d_render_device->Release();
-   d3d->d3d_device->Release();
+   if (d3d->d3d_render_device)
+   {
+      d3d->d3d_render_device->Release();
+      d3d->d3d_render_device = 0;
+   }
+
+   if (d3d->d3d_device)
+   {
+      d3d->d3d_device->Release();
+      d3d->d3d_device = 0;
+   }
 }
 
 static void gfx_ctx_xdk_input_driver(const input_driver_t **input, void **input_data) { }

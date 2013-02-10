@@ -33,6 +33,7 @@
 #include "screenshot.h"
 #include "cheats.h"
 #include "compat/getopt_rarch.h"
+#include "compat/posix_string.h"
 
 #if defined(_WIN32) && !defined(_XBOX)
 #define WIN32_LEAN_AND_MEAN
@@ -181,6 +182,9 @@ static void readjust_audio_input_rate(void)
    int avail = audio_write_avail_func();
    //RARCH_LOG_OUTPUT("Audio buffer is %u%% full\n",
    //      (unsigned)(100 - (avail * 100) / g_extern.audio_data.driver_buffer_size));
+
+   unsigned write_index = g_extern.measure_data.buffer_free_samples_count++ & (AUDIO_BUFFER_FREE_SAMPLES_COUNT - 1);
+   g_extern.measure_data.buffer_free_samples[write_index] = avail;
 
    int half_size = g_extern.audio_data.driver_buffer_size / 2;
    int delta_mid = avail - half_size;
@@ -399,7 +403,8 @@ static bool audio_flush(const int16_t *data, size_t samples)
 
    RARCH_PERFORMANCE_INIT(resampler_proc);
    RARCH_PERFORMANCE_START(resampler_proc);
-   resampler_process(g_extern.audio_data.source, &src_data);
+   rarch_resampler_process(g_extern.audio_data.resampler,
+         g_extern.audio_data.resampler_data, &src_data);
    RARCH_PERFORMANCE_STOP(resampler_proc);
 
    output_data   = g_extern.audio_data.outsamples;
@@ -599,12 +604,12 @@ static void print_features(void)
    _PSUPP(pulse, "PulseAudio", "audio driver");
    _PSUPP(dsound, "DirectSound", "audio driver");
    _PSUPP(xaudio, "XAudio2", "audio driver");
+   _PSUPP(zlib, "zlib", "PNG encode/decode and .zip extraction");
    _PSUPP(al, "OpenAL", "audio driver");
    _PSUPP(dylib, "External", "External filter and plugin support");
    _PSUPP(cg, "Cg", "Cg pixel shaders");
    _PSUPP(libxml2, "libxml2", "libxml2 XML parsing");
    _PSUPP(sdl_image, "SDL_image", "SDL_image image loading");
-   _PSUPP(libpng, "libpng", "libpng screenshot support");
    _PSUPP(fbo, "FBO", "OpenGL render-to-texture (multi-pass shaders)");
    _PSUPP(dynamic, "Dynamic", "Dynamic run-time loading of libretro library");
    _PSUPP(ffmpeg, "FFmpeg", "On-the-fly recording of gameplay with libavcodec");
@@ -721,14 +726,6 @@ static void set_paths(const char *path)
 {
    set_basename(path);
 
-   RARCH_LOG("Opening file: \"%s\"\n", path);
-   g_extern.rom_file = fopen(path, "rb");
-   if (g_extern.rom_file == NULL)
-   {
-      RARCH_ERR("Could not open file: \"%s\"\n", path);
-      rarch_fail(1, "set_paths()");
-   }
-
    if (!g_extern.has_set_save_path)
       fill_pathname_noext(g_extern.savefile_name_srm, g_extern.basename, ".srm", sizeof(g_extern.savefile_name_srm));
    if (!g_extern.has_set_state_path)
@@ -764,13 +761,13 @@ static void set_paths(const char *path)
 
 static void verify_stdin_paths(void)
 {
-   if (strlen(g_extern.savefile_name_srm) == 0)
+   if (!*g_extern.savefile_name_srm)
    {
       RARCH_ERR("Need savefile path argument (--save) when reading rom from stdin.\n");
       print_help();
       rarch_fail(1, "verify_stdin_paths()");
    }
-   else if (strlen(g_extern.savestate_name) == 0)
+   else if (!*g_extern.savestate_name)
    {
       RARCH_ERR("Need savestate path argument (--savestate) when reading rom from stdin.\n");
       print_help();
@@ -1855,6 +1852,9 @@ static void load_auto_state(void)
       return;
 #endif
 
+   if (!g_settings.savestate_auto_load)
+      return;
+
    char savestate_name_auto[PATH_MAX];
    fill_pathname_noext(savestate_name_auto, g_extern.savestate_name,
          ".auto", sizeof(savestate_name_auto));
@@ -2617,8 +2617,13 @@ void rarch_init_system_info(void)
    if (!info->library_version)
       info->library_version = "v0";
 
+#ifdef RARCH_CONSOLE
+   snprintf(g_extern.title_buf, sizeof(g_extern.title_buf), "%s %s",
+         info->library_name, info->library_version);
+#else
    snprintf(g_extern.title_buf, sizeof(g_extern.title_buf), "RetroArch : %s %s",
          info->library_name, info->library_version);
+#endif
    strlcpy(g_extern.system.valid_extensions, info->valid_extensions ? info->valid_extensions : DEFAULT_EXT,
          sizeof(g_extern.system.valid_extensions));
    g_extern.system.block_extract = info->block_extract;
@@ -2661,10 +2666,6 @@ static void validate_cpu_features(void)
    if (!(cpu.simd & RARCH_SIMD_AVX))
       FAIL_CPU("AVX");
 #endif
-#ifdef HAVE_NEON
-   if (!(cpu.simd & RARCH_SIMD_NEON))
-      FAIL_CPU("NEON");
-#endif
 }
 
 int rarch_main_init(int argc, char *argv[])
@@ -2702,10 +2703,11 @@ int rarch_main_init(int argc, char *argv[])
    bool allow_cheats = true;
 
    fill_pathnames();
-   set_savestate_auto_index();
 
    if (!init_rom_file(g_extern.game_type))
       goto error;
+
+   set_savestate_auto_index();
 
    init_system_av_info();
 
@@ -2913,6 +2915,14 @@ void rarch_main_deinit(void)
    pretro_deinit();
    uninit_drivers();
    uninit_libretro_sym();
+
+   if (g_extern.rom_file_temporary)
+   {
+      RARCH_LOG("Removing tempoary ROM file: %s.\n", g_extern.last_rom);
+      if (remove(g_extern.last_rom) < 0)
+         RARCH_ERR("Failed to remove temporary file: %s.\n", g_extern.last_rom);
+      g_extern.rom_file_temporary = false;
+   }
 
    g_extern.main_is_init = false;
 }

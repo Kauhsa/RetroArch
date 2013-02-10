@@ -104,6 +104,12 @@ static const bool _xaudio_supp = true;
 static const bool _xaudio_supp = false;
 #endif
 
+#ifdef HAVE_ZLIB
+static const bool _zlib_supp = true;
+#else
+static const bool _zlib_supp = false;
+#endif
+
 #ifdef HAVE_DYLIB
 static const bool _dylib_supp = true;
 #else
@@ -126,12 +132,6 @@ static const bool _libxml2_supp = false;
 static const bool _sdl_image_supp = true;
 #else
 static const bool _sdl_image_supp = false;
-#endif
-
-#ifdef HAVE_LIBPNG
-static const bool _libpng_supp = true;
-#else
-static const bool _libpng_supp = false;
 #endif
 
 #ifdef HAVE_FBO

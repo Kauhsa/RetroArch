@@ -47,6 +47,8 @@ static void *android_input_init(void)
 {
    pads_connected = 0;
 
+   input_autodetect_init();
+
    for(unsigned player = 0; player < 4; player++)
       for(unsigned i = 0; i < RARCH_FIRST_META_KEY; i++)
       {
@@ -73,8 +75,7 @@ static void *android_input_init(void)
       g_settings.input.binds[player][RETRO_DEVICE_ID_JOYPAD_L3].joykey = (1ULL << RETRO_DEVICE_ID_JOYPAD_L3);
       g_settings.input.binds[player][RETRO_DEVICE_ID_JOYPAD_R3].joykey = (1ULL << RETRO_DEVICE_ID_JOYPAD_R3);
    }
-
-   input_autodetect_init();
+   g_settings.input.dpad_emulation[0] = DPAD_EMULATION_LSTICK;
    return (void*)-1;
 }
 
@@ -98,6 +99,7 @@ static void android_input_poll(void *data)
       if (AInputQueue_getEvent(android_app->inputQueue, &event) < 0)
          break;
 
+      bool long_msg_enable = false;
       int32_t handled = 1;
       int action = 0;
       char msg[128];
@@ -105,14 +107,21 @@ static void android_input_poll(void *data)
 
       int source = AInputEvent_getSource(event);
       int id = AInputEvent_getDeviceId(event);
+      if (id == zeus_second_id)
+         id = zeus_id;
       int keycode = AKeyEvent_getKeyCode(event);
 
       int type_event = AInputEvent_getType(event);
       int state_id = -1;
 
-      for (unsigned i = 0; i < pads_connected; i++)
-         if (state_device_ids[i] == id)
-            state_id = i;
+      if (source & (AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_MOUSE | AINPUT_SOURCE_TOUCHPAD))
+         state_id = 0; // touch overlay is always player 1
+      else
+      {
+         for (unsigned i = 0; i < pads_connected; i++)
+            if (state_device_ids[i] == id)
+               state_id = i;
+      }
 
       if (state_id < 0)
       {
@@ -120,15 +129,21 @@ static void android_input_poll(void *data)
          state_device_ids[pads_connected++] = id;
 
          input_autodetect_setup(android_app, msg, sizeof(msg), state_id, id, source);
+         long_msg_enable = true;
       }
 
-      if (keycode == AKEYCODE_BACK && (source & (AINPUT_SOURCE_KEYBOARD)))
+      if (keycode == AKEYCODE_BACK )
       {
-         *lifecycle_state |= (1ULL << RARCH_QUIT_KEY);
-         AInputQueue_finishEvent(android_app->inputQueue, event, handled);
-         break;
+         int meta = AKeyEvent_getMetaState(event);
+         if (!(meta & AMETA_ALT_ON))
+         {
+            *lifecycle_state |= (1ULL << RARCH_QUIT_KEY);
+            AInputQueue_finishEvent(android_app->inputQueue, event, handled);
+            break;
+         }
       }
-      else if(type_event == AINPUT_EVENT_TYPE_MOTION && (g_settings.input.dpad_emulation[state_id] != DPAD_EMULATION_NONE))
+
+      if (type_event == AINPUT_EVENT_TYPE_MOTION)
       {
          float x = 0.0f;
          float y = 0.0f;
@@ -136,17 +151,20 @@ static void android_input_poll(void *data)
          size_t motion_pointer = action >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
          action &= AMOTION_EVENT_ACTION_MASK;
 
-         if(source & ~(AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_MOUSE))
+         if (source & ~(AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_MOUSE))
          {
-            uint64_t *state_cur = &state[state_id];
-            x = AMotionEvent_getX(event, motion_pointer);
-            y = AMotionEvent_getY(event, motion_pointer);
-            *state_cur &= ~((1ULL << RETRO_DEVICE_ID_JOYPAD_LEFT) | (1ULL << RETRO_DEVICE_ID_JOYPAD_RIGHT) |
-                  (1ULL << RETRO_DEVICE_ID_JOYPAD_UP) | (1ULL << RETRO_DEVICE_ID_JOYPAD_DOWN));
-            *state_cur |= PRESSED_LEFT(x, y)  ? (1ULL << RETRO_DEVICE_ID_JOYPAD_LEFT)  : 0;
-            *state_cur |= PRESSED_RIGHT(x, y) ? (1ULL << RETRO_DEVICE_ID_JOYPAD_RIGHT) : 0;
-            *state_cur |= PRESSED_UP(x, y)    ? (1ULL << RETRO_DEVICE_ID_JOYPAD_UP)    : 0;
-            *state_cur |= PRESSED_DOWN(x, y)  ? (1ULL << RETRO_DEVICE_ID_JOYPAD_DOWN)  : 0;
+            if (g_settings.input.dpad_emulation[state_id] != DPAD_EMULATION_NONE)
+            {
+               uint64_t *state_cur = &state[state_id];
+               x = AMotionEvent_getX(event, motion_pointer);
+               y = AMotionEvent_getY(event, motion_pointer);
+               *state_cur &= ~((1ULL << RETRO_DEVICE_ID_JOYPAD_LEFT) | (1ULL << RETRO_DEVICE_ID_JOYPAD_RIGHT) |
+                     (1ULL << RETRO_DEVICE_ID_JOYPAD_UP) | (1ULL << RETRO_DEVICE_ID_JOYPAD_DOWN));
+               *state_cur |= PRESSED_LEFT(x, y)  ? (1ULL << RETRO_DEVICE_ID_JOYPAD_LEFT)  : 0;
+               *state_cur |= PRESSED_RIGHT(x, y) ? (1ULL << RETRO_DEVICE_ID_JOYPAD_RIGHT) : 0;
+               *state_cur |= PRESSED_UP(x, y)    ? (1ULL << RETRO_DEVICE_ID_JOYPAD_UP)    : 0;
+               *state_cur |= PRESSED_DOWN(x, y)  ? (1ULL << RETRO_DEVICE_ID_JOYPAD_DOWN)  : 0;
+            }
          }
          else
          {
@@ -154,7 +172,8 @@ static void android_input_poll(void *data)
                   action == AMOTION_EVENT_ACTION_CANCEL || action == AMOTION_EVENT_ACTION_POINTER_UP) ||
                (source == AINPUT_SOURCE_MOUSE && action != AMOTION_EVENT_ACTION_DOWN);
 
-            if (motion_pointer < MAX_TOUCH)
+            int max = min(AMotionEvent_getPointerCount(event), MAX_TOUCH);
+            for (motion_pointer = 0; motion_pointer < max; motion_pointer++)
             {
                if (!keyup)
                {
@@ -174,8 +193,6 @@ static void android_input_poll(void *data)
                      pointer_count--;
                }
             }
-            else
-               RARCH_WARN("Got motion pointer out of range (index: %u).\n", motion_pointer);
          }
 
          if (debug_enable)
@@ -208,12 +225,12 @@ static void android_input_poll(void *data)
                *key |= input_state;
          }
 
-         if(volume_enable && (keycode == AKEYCODE_VOLUME_UP || keycode == AKEYCODE_VOLUME_DOWN))
+         if((keycode == AKEYCODE_VOLUME_UP || keycode == AKEYCODE_VOLUME_DOWN) && keycode_lut[keycode] == 0)
             handled = 0;
       }
 
       if (msg[0] != 0)
-         msg_queue_push(g_extern.msg_queue, msg, 0, 30);
+         msg_queue_push(g_extern.msg_queue, msg, 0, long_msg_enable ? 180 : 30);
 
       AInputQueue_finishEvent(android_app->inputQueue, event, handled);
    }

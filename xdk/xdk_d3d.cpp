@@ -950,10 +950,6 @@ static void xdk_d3d_start(void)
    d3d->font_ctx = d3d_font_init_first(d3d, g_settings.video.font_path, 0 /* font size - fixed/unused */);
 }
 
-static void xdk_d3d_restart(void)
-{
-}
-
 static void xdk_d3d_stop(void)
 {
    void *data = driver.video_data;
@@ -961,6 +957,28 @@ static void xdk_d3d_stop(void)
    xdk_d3d_free(data);
 
    driver.video_data = NULL;
+}
+
+static void xdk_d3d_restart(void)
+{
+   xdk_d3d_video_t *d3d = (xdk_d3d_video_t*)driver.video_data;
+   LPDIRECT3DDEVICE d3dr = (LPDIRECT3DDEVICE)d3d->d3d_render_device;
+
+   if (!d3d)
+      return;
+
+   D3DPRESENT_PARAMETERS d3dpp;
+   video_info_t video_info = {0};
+
+   video_info.vsync = g_settings.video.vsync;
+   video_info.force_aspect = false;
+   video_info.smooth = g_settings.video.smooth;
+   video_info.input_scale = 2;
+   video_info.fullscreen = true;
+   video_info.rgb32 = (d3d->base_size == sizeof(uint32_t)) ? true : false;
+   xdk_d3d_generate_pp(&d3dpp, &video_info);
+
+   d3dr->Reset(&d3dpp);
 }
 
 static void xdk_d3d_apply_state_changes(void)

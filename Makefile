@@ -27,6 +27,8 @@ OBJ = retroarch.o \
 		gfx/image.o \
 		gfx/fonts/fonts.o \
 		gfx/fonts/bitmapfont.o \
+		audio/hermite.o \
+		audio/resampler.o \
 		performance.o
 
 JOYCONFIG_OBJ = tools/retroarch-joyconfig.o \
@@ -222,7 +224,7 @@ ifeq ($(HAVE_VG), 1)
 endif
 
 ifeq ($(HAVE_VIDEOCORE), 1)
-   LIBS += -lbcm_host -lvcos -lvchiq_arm
+   LIBS += -lbcm_host -lvcos -lvchiq_arm -lEGL
 endif
 
 ifeq ($(HAVE_XVIDEO), 1)
@@ -266,20 +268,12 @@ endif
 ifeq ($(HAVE_SDL_IMAGE), 1)
    LIBS += $(SDL_IMAGE_LIBS)
    DEFINES += $(SDL_IMAGE_CFLAGS)
-else
-   ifeq ($(HAVE_ZLIB), 1)
-      OBJ += gfx/rpng/rpng.o
-   endif
 endif
 
 ifeq ($(HAVE_ZLIB), 1)
+   OBJ += gfx/rpng/rpng.o file_extract.o
    LIBS += $(ZLIB_LIBS)
-   DEFINES += $(ZLIB_CFLAGS)
-endif
-
-ifeq ($(HAVE_LIBPNG), 1)
-   LIBS += $(LIBPNG_LIBS)
-   DEFINES += $(LIBPNG_CFLAGS)
+   DEFINES += $(ZLIB_CFLAGS) -DHAVE_ZLIB_DEFLATE
 endif
 
 ifeq ($(HAVE_FFMPEG), 1)
@@ -306,8 +300,6 @@ ifeq ($(HAVE_SINC), 1)
    ifeq ($(HAVE_NEON),1)
       OBJ += audio/sinc_neon.o
    endif
-else
-   OBJ += audio/hermite.o
 endif
 OBJ += audio/utils.o
 ifeq ($(HAVE_NEON),1)
@@ -374,13 +366,13 @@ install: $(TARGET)
 	mkdir -p $(DESTDIR)$(PREFIX)/bin 2>/dev/null || /bin/true
 	mkdir -p $(DESTDIR)/etc 2>/dev/null || /bin/true
 	mkdir -p $(DESTDIR)$(PREFIX)/share/man/man1 2>/dev/null || /bin/true
-	mkdir -p $(DESTDIR)$(PREFIX)/share/icons 2>/dev/null || /bin/true
+	mkdir -p $(DESTDIR)$(PREFIX)/share/pixmaps 2>/dev/null || /bin/true
 	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin 
 	install -m644 retroarch.cfg $(DESTDIR)/etc/retroarch.cfg
 	install -m644 docs/retroarch.1 $(DESTDIR)$(MAN_DIR)
 	install -m644 docs/retroarch-joyconfig.1 $(DESTDIR)$(MAN_DIR)
 	install -m755 retroarch-zip $(DESTDIR)$(PREFIX)/bin
-	install -m644 media/retroarch.png $(DESTDIR)$(PREFIX)/share/icons
+	install -m644 media/retroarch.png $(DESTDIR)$(PREFIX)/share/pixmaps
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/retroarch
@@ -390,7 +382,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/retroarch.cfg
 	rm -f $(DESTDIR)$(PREFIX)/share/man/man1/retroarch.1
 	rm -f $(DESTDIR)$(PREFIX)/share/man/man1/retroarch-joyconfig.1
-	rm -f $(DESTDIR)$(PREFIX)/share/icons/retroarch.png
+	rm -f $(DESTDIR)$(PREFIX)/share/pixmaps/retroarch.png
 
 clean:
 	rm -f *.o 

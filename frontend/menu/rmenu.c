@@ -42,7 +42,7 @@
 #include "../../general.h"
 
 
-rmenu_state_t rmenu_state;
+static rmenu_state_t rmenu_state;
 
 static bool set_libretro_core_as_launch;
 
@@ -161,6 +161,12 @@ static void populate_setting_item(void *data, unsigned input)
          snprintf(current_item->comment, sizeof(current_item->comment), "INFO - Select a shader as [Shader #2]. NOTE: Some shaders might be\ntoo slow at 1080p. If you experience any slowdown, try another shader.");
          break;
 #endif
+      case SETTING_EMU_SKIN:
+         fill_pathname_base(fname, g_extern.console.menu_texture_path, sizeof(fname));
+         snprintf(current_item->text, sizeof(current_item->text), "Menu Skin");
+         snprintf(current_item->setting_text, sizeof(current_item->setting_text), "%s", fname);
+         snprintf(current_item->comment, sizeof(current_item->comment), "INFO - Select a skin for the menu.");
+         break;
       case SETTING_FONT_SIZE:
          snprintf(current_item->text, sizeof(current_item->text), "Font Size");
          snprintf(current_item->setting_text, sizeof(current_item->setting_text), "%f", g_settings.video.font_size);
@@ -284,6 +290,21 @@ static void populate_setting_item(void *data, unsigned input)
          snprintf(current_item->setting_text, sizeof(current_item->setting_text), "");
          snprintf(current_item->comment, sizeof(current_item->comment), "INFO - Set all [General Audio Settings] back to their 'DEFAULT' values.");
          break;
+      case SETTING_RESAMPLER_TYPE:
+         snprintf(current_item->text, sizeof(current_item->text), "Sound resampler");
+#ifdef HAVE_SINC
+         if (strstr(g_settings.audio.resampler, "sinc"))
+         {
+            snprintf(current_item->setting_text, sizeof(current_item->setting_text), "Sinc");
+            snprintf(current_item->comment, sizeof(current_item->comment), "INFO - [Sinc resampler] - slightly slower but better sound quality at high frequencies.");
+         }
+         else
+#endif
+         {
+            snprintf(current_item->setting_text, sizeof(current_item->setting_text), "Hermite");
+            snprintf(current_item->comment, sizeof(current_item->comment), "INFO - [Hermite resampler] - faster but less accurate at high frequencies.");
+         }
+         break;
       case SETTING_EMU_CURRENT_SAVE_STATE_SLOT:
          snprintf(current_item->text, sizeof(current_item->text), "Current save state slot");
          snprintf(current_item->setting_text, sizeof(current_item->setting_text), "%d", g_extern.state_slot);
@@ -308,31 +329,11 @@ static void populate_setting_item(void *data, unsigned input)
          else
             snprintf(current_item->comment, sizeof(current_item->comment), "INFO - [Rewind] feature is set to 'OFF'.");
          break;
-#ifdef HAVE_ZLIB
-      case SETTING_ZIP_EXTRACT:
-         snprintf(current_item->text, sizeof(current_item->text), "Unzip mode");
-         if (g_extern.lifecycle_mode_state & (1ULL << MODE_UNZIP_TO_CURDIR))
-         {
-            snprintf(current_item->setting_text, sizeof(current_item->setting_text), "Current dir");
-            snprintf(current_item->comment, sizeof(current_item->comment), "INFO - ZIP files are extracted to the current dir.");
-         }
-         else if (g_extern.lifecycle_mode_state & (1ULL <<MODE_UNZIP_TO_CURDIR_AND_LOAD_FIRST_FILE))
-         {
-            snprintf(current_item->setting_text, sizeof(current_item->setting_text), "Current dir, load first file");
-            snprintf(current_item->comment, sizeof(current_item->comment), "INFO - ZIP files are extracted to current dir, and auto-loaded.");
-         }
-         else if (g_extern.lifecycle_mode_state & (1ULL <<MODE_UNZIP_TO_CURDIR_AND_LOAD_FIRST_FILE_AND_CLEAN))
-         {
-            snprintf(current_item->setting_text, sizeof(current_item->setting_text), "Current dir, load first file and cleanup");
-            snprintf(current_item->comment, sizeof(current_item->comment), "INFO - ZIP files are extracted to current dir, auto-loaded and then\n removed afterwards.");
-         }
-         else if (g_extern.lifecycle_mode_state & (1ULL << MODE_UNZIP_TO_CACHEDIR))
-         {
-            snprintf(current_item->setting_text, sizeof(current_item->setting_text), "Cache dir");
-            snprintf(current_item->comment, sizeof(current_item->comment), "INFO - ZIP files are extracted to the cache dir.");
-         }
+      case SETTING_EMU_REWIND_GRANULARITY:
+         snprintf(current_item->text, sizeof(current_item->text), "Rewind granularity");
+         snprintf(current_item->setting_text, sizeof(current_item->setting_text), "%d", g_settings.rewind_granularity);
+         snprintf(current_item->comment, sizeof(current_item->comment), "INFO - Set the amount of frames to 'rewind'.\nIncrease this to lower CPU usage.");
          break;
-#endif
       case SETTING_RARCH_DEFAULT_EMU:
          snprintf(current_item->text, sizeof(current_item->text), "Default libretro core");
          fill_pathname_base(fname, g_settings.libretro, sizeof(fname));
@@ -559,12 +560,7 @@ static void browser_update(void *data, uint64_t input, const char *extensions)
    filebrowser_action_t action = FILEBROWSER_ACTION_NOOP;
    bool ret = true;
 
-   if (g_extern.lifecycle_mode_state & (1ULL << MODE_FILEBROWSER_REFRESH_PENDING))
-   {
-      action = FILEBROWSER_ACTION_REFRESH;
-      g_extern.lifecycle_mode_state &= ~(1ULL << MODE_FILEBROWSER_REFRESH_PENDING);
-   }
-   else if (input & (1ULL << RMENU_DEVICE_NAV_DOWN))
+   if (input & (1ULL << RMENU_DEVICE_NAV_DOWN))
       action = FILEBROWSER_ACTION_DOWN;
    else if (input & (1ULL << RMENU_DEVICE_NAV_UP))
       action = FILEBROWSER_ACTION_UP;
@@ -726,6 +722,11 @@ int select_file(void *data, void *state)
                config_read_keybinds(path);
                break;
             case BORDER_CHOICE:
+#ifdef __CELLOS_LV2__
+               texture_image_border_load(path);
+               snprintf(g_extern.console.menu_texture_path, sizeof(g_extern.console.menu_texture_path),
+                     "%s", path);
+#endif
                break;
             case LIBRETRO_CHOICE:
                strlcpy(g_settings.libretro, path, sizeof(g_settings.libretro));
@@ -1090,6 +1091,21 @@ static int set_setting_action(void *data, unsigned switchvalue, uint64_t input)
                RARCH_ERR("Shaders are unsupported on this platform.\n");
          }
          break;
+      case SETTING_EMU_SKIN:
+         if((input & (1ULL << RMENU_DEVICE_NAV_LEFT)) || (input & (1ULL << RMENU_DEVICE_NAV_RIGHT)) || (input & (1ULL << RMENU_DEVICE_NAV_B)))
+         {
+            menu_stack_push(BORDER_CHOICE);
+            filebrowser_set_root_and_ext(filebrowser, EXT_IMAGES, default_paths.border_dir);
+         }
+         if(input & (1ULL << RMENU_DEVICE_NAV_START))
+         {
+            if (!texture_image_load(default_paths.menu_border_file, &g_extern.console.menu_texture))
+            {
+               RARCH_ERR("Failed to load texture image for menu.\n");
+               return false;
+            }
+         }
+         break;
 #endif
       case SETTING_FONT_SIZE:
          if(input & (1ULL << RMENU_DEVICE_NAV_LEFT))
@@ -1394,22 +1410,23 @@ static int set_setting_action(void *data, unsigned switchvalue, uint64_t input)
          if(input & (1ULL << RMENU_DEVICE_NAV_START))
             g_settings.rewind_enable = false;
          break;
-#ifdef HAVE_ZLIB
-      case SETTING_ZIP_EXTRACT:
-         if((input & (1ULL << RMENU_DEVICE_NAV_LEFT)))
-            rmenu_settings_set(S_UNZIP_MODE_DECREMENT);
+      case SETTING_EMU_REWIND_GRANULARITY:
+         if(input & (1ULL << RMENU_DEVICE_NAV_LEFT))
+         {
+            if (g_settings.rewind_granularity > 1)
+               g_settings.rewind_granularity--;
+         }
          if((input & (1ULL << RMENU_DEVICE_NAV_RIGHT)) || (input & (1ULL << RMENU_DEVICE_NAV_B)))
-            rmenu_settings_set(S_UNZIP_MODE_INCREMENT);
+            g_settings.rewind_granularity++;
          if(input & (1ULL << RMENU_DEVICE_NAV_START))
-            rmenu_settings_set_default(S_DEF_UNZIP_MODE);
+            g_settings.rewind_granularity = 1;
          break;
-#endif
       case SETTING_RARCH_DEFAULT_EMU:
          if((input & (1ULL << RMENU_DEVICE_NAV_LEFT)) || (input & (1ULL << RMENU_DEVICE_NAV_RIGHT)) || (input & (1ULL << RMENU_DEVICE_NAV_B)))
          {
             menu_stack_push(LIBRETRO_CHOICE);
             filebrowser_set_root_and_ext(filebrowser, EXT_EXECUTABLES, default_paths.core_dir);
-            set_libretro_core_as_launch = false;
+            set_libretro_core_as_launch = true;
          }
          if(input & (1ULL << RMENU_DEVICE_NAV_START))
          {
@@ -1421,6 +1438,46 @@ static int set_setting_action(void *data, unsigned switchvalue, uint64_t input)
             g_extern.lifecycle_mode_state &= ~((1ULL << MODE_GAME));
             g_extern.lifecycle_mode_state |= (1ULL << MODE_EXIT);
             return -1;
+         }
+         break;
+      case SETTING_RESAMPLER_TYPE:
+         if((input & (1ULL << RMENU_DEVICE_NAV_LEFT)) || (input & (1ULL << RMENU_DEVICE_NAV_RIGHT)) || (input & (1ULL << RMENU_DEVICE_NAV_B)))
+         {
+#ifdef HAVE_SINC
+            if( strstr(g_settings.audio.resampler, "hermite"))
+               snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "sinc");
+            else
+#endif
+               snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "hermite");
+
+            if (g_extern.main_is_init)
+            {
+               if (!rarch_resampler_realloc(&g_extern.audio_data.resampler_data, &g_extern.audio_data.resampler,
+                        g_settings.audio.resampler))
+               {
+                  RARCH_ERR("Failed to initialize resampler \"%s\".\n", g_settings.audio.resampler);
+                  g_extern.audio_active = false;
+               }
+            }
+
+         }
+         if(input & (1ULL << RMENU_DEVICE_NAV_START))
+         {
+#ifdef HAVE_SINC
+            snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "sinc");
+#else
+            snprintf(g_settings.audio.resampler, sizeof(g_settings.audio.resampler), "hermite");
+#endif
+            
+            if (g_extern.main_is_init)
+            {
+               if (!rarch_resampler_realloc(&g_extern.audio_data.resampler_data, &g_extern.audio_data.resampler,
+                        g_settings.audio.resampler))
+               {
+                  RARCH_ERR("Failed to initialize resampler \"%s\".\n", g_settings.audio.resampler);
+                  g_extern.audio_active = false;
+               }
+            }
          }
          break;
       case SETTING_EMU_AUDIO_MUTE:
@@ -1827,7 +1884,10 @@ int select_rom(void *data, void *state)
             rmenu_settings_msg(S_MSG_DIR_LOADING_ERROR, S_DELAY_180);
       }
       else
-         console_load_game(filebrowser_get_current_path(filebrowser));
+      {
+         strlcpy(g_extern.fullpath, filebrowser_get_current_path(filebrowser), sizeof(g_extern.fullpath));
+         g_extern.lifecycle_mode_state |= (1ULL << MODE_LOAD_GAME);
+      }
    }
    else if (input & (1ULL << RMENU_DEVICE_NAV_L1))
    {
@@ -2288,13 +2348,6 @@ int ingame_menu(void *data, void *state)
          menu_idx = 0;
    }
 
-   if((input & (1ULL << RMENU_DEVICE_NAV_L3)) && (input & (1ULL << RMENU_DEVICE_NAV_R3)))
-   {
-      g_extern.lifecycle_mode_state |= (1ULL << MODE_GAME);
-      g_extern.lifecycle_mode_state |= (1ULL << MODE_MENU_INGAME_EXIT);
-      return -1;
-   }
-
    display_menubar(current_menu);
 
    device_ptr->font_ctx->render_msg_place(device_ptr,default_pos.x_position, default_pos.comment_y_position, default_pos.font_size, WHITE, strw_buffer);
@@ -2357,7 +2410,6 @@ INPUT POLL CALLBACK
 void rmenu_input_poll(void *data, void *state)
 {
    menu *current_menu    = (menu*)data;
-   rmenu_state_t *rstate = (rmenu_state_t*)state;
 
    //first button input frame
    uint64_t input_state_first_frame = 0;
@@ -2371,7 +2423,7 @@ void rmenu_input_poll(void *data, void *state)
             RETRO_DEVICE_JOYPAD, 0, i) ? (1ULL << i) : 0;
 
    //set first button input frame as trigger
-   rstate->input = input_state & ~(rstate->old_state);
+   rmenu_state.input = input_state & ~(rmenu_state.old_state);
    //hold onto first button input frame
    input_state_first_frame = input_state;          
 
@@ -2400,11 +2452,11 @@ void rmenu_input_poll(void *data, void *state)
       if(!(g_extern.frame_count < g_extern.delay_timer[1]))
       {
          first_held = false;
-         rstate->input = input_state; //second input frame set as current frame
+         rmenu_state.input = input_state; //second input frame set as current frame
       }
    }
 
-   rstate->old_state = input_state_first_frame;
+   rmenu_state.old_state = input_state_first_frame;
 }
 
 /*============================================================
@@ -2433,8 +2485,11 @@ int rmenu_input_process(void *data, void *state)
 
       if (return_to_game_enable)
       {
-         g_extern.lifecycle_mode_state |= (1ULL << MODE_GAME);
-         return -1;
+         if (!(g_extern.lifecycle_mode_state & (1ULL << MODE_MENU_INGAME)))
+         {
+            g_extern.lifecycle_mode_state |= (1ULL << MODE_GAME);
+            return -1;
+         }
       }
    }
 
@@ -2507,7 +2562,7 @@ bool rmenu_iterate(void)
    const char *msg;
 
    DEVICE_CAST device_ptr = (DEVICE_CAST)driver.video_data;
-   menu current_menu;
+   static menu current_menu;
 
    if (g_extern.lifecycle_mode_state & (1ULL << MODE_MENU_PREINIT))
    {
@@ -2516,7 +2571,10 @@ bool rmenu_iterate(void)
 
       menu_stack_force_refresh();
       g_extern.lifecycle_mode_state |= (1ULL << MODE_MENU_DRAW);
+
+#ifndef __CELLOS_LV2__
       device_ptr->ctx_driver->rmenu_init();
+#endif
 
       g_extern.lifecycle_mode_state &= ~(1ULL << MODE_MENU_PREINIT);
    }
@@ -2534,7 +2592,7 @@ bool rmenu_iterate(void)
    rarch_render_cached_frame();
 
    if(current_menu.input_poll)
-      current_menu.input_poll(&current_menu, &rmenu_state);
+      rmenu_input_poll(&current_menu, &rmenu_state);
 
 #ifdef HAVE_OSKUTIL
    if(rmenu_state.osk_init != NULL)
@@ -2589,7 +2647,9 @@ deinit:
 
    g_extern.lifecycle_mode_state &= ~(1ULL << MODE_MENU_DRAW);
 
+#ifndef __CELLOS_LV2__
    device_ptr->ctx_driver->rmenu_free();
+#endif
 
    return false;
 }
