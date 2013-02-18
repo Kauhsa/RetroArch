@@ -66,9 +66,16 @@ public class RetroArch extends Activity implements
 	private ConfigFile core_config;
 	
 	private final double getDisplayRefreshRate() {
+		// Android is *very* likely to screw this up.
+		// It is rarely a good value to use, so make sure it's not
+		// completely wrong. Some phones return refresh rates that are completely bogus
+		// (like 0.3 Hz, etc), so try to be very conservative here.
 		final WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
 		final Display display = wm.getDefaultDisplay();
-		return display.getRefreshRate();
+		double rate = display.getRefreshRate();
+		if (rate > 61.0 || rate < 58.0)
+			rate = 59.95;
+		return rate;
 	}
 
 	private final double getRefreshRate() {
@@ -176,10 +183,19 @@ public class RetroArch extends Activity implements
 			}
 			
 			//extractAssets(assets, cacheDir, "", 0);
-			Log.i("ASSETS", "Extracting shader assets now...");
-			extractAssets(assets, cacheDir, "Shaders", 1);
-			Log.i("ASSETS", "Extracting overlay assets now...");
-			extractAssets(assets, cacheDir, "Overlays", 1);
+			Log.i("ASSETS", "Extracting shader assets now ...");
+			try {
+				extractAssets(assets, cacheDir, "Shaders", 1);
+			} catch (IOException e) {
+				Log.i("ASSETS", "Failed to extract shaders ...");
+			}
+			
+			Log.i("ASSETS", "Extracting overlay assets now ...");
+			try {
+				extractAssets(assets, cacheDir, "Overlays", 1);
+			} catch (IOException e) {
+				Log.i("ASSETS", "Failed to extract overlays ...");
+			}
 			
 			DataOutputStream outputCacheVersion = new DataOutputStream(new FileOutputStream(cacheVersion, false));
 			outputCacheVersion.writeInt(version);
@@ -192,7 +208,6 @@ public class RetroArch extends Activity implements
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
-
 		
 		try {
 			config = new ConfigFile(new File(getDefaultConfigPath()));
@@ -269,9 +284,35 @@ public class RetroArch extends Activity implements
 		
 		this.setVolumeControlStream(AudioManager.STREAM_MUSIC);
 		
-		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB)
-		{
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB) {
 			this.registerForContextMenu(findViewById(android.R.id.content));
+		}
+	}
+	
+	@Override
+	protected void onStart() {
+		super.onStart();
+		
+		SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
+		
+		if (!prefs.getBoolean("first_time_refreshrate_calculate", false)) {
+			prefs.edit().putBoolean("first_time_refreshrate_calculate", true).commit();
+			AlertDialog.Builder alert = new AlertDialog.Builder(this)
+				.setTitle("Calculate Refresh Rate")
+				.setMessage("It is highly recommended you run the refresh rate calibration test before you use RetroArch. Do you want to run it now?\n\nIf you choose No, you can run it at any time in the video preferences.")
+				.setPositiveButton("Yes", new DialogInterface.OnClickListener() {
+					@Override
+					public void onClick(DialogInterface dialog, int which) {
+						Intent i = new Intent(getBaseContext(), DisplayRefreshRateTest.class);
+						startActivity(i);
+					}
+				})
+				.setNegativeButton("No", new DialogInterface.OnClickListener() {
+					@Override
+					public void onClick(DialogInterface dialog, int which) {
+					}
+				});
+			alert.show();
 		}
 	}
 
@@ -329,15 +370,7 @@ public class RetroArch extends Activity implements
 		config.setInt("input_autodetect_icade_profile_pad3", prefs.getInt("input_autodetect_icade_profile_pad3", 0));
 		config.setInt("input_autodetect_icade_profile_pad4", prefs.getInt("input_autodetect_icade_profile_pad4", 0));
 		
-		if (prefs.getBoolean("video_sync_refreshrate_to_screen", true)
-				&& (getRefreshRate() < 59.95)) {
-			Log.i(TAG,
-					"Refresh rate of screen lower than 59.95Hz, adjusting to screen.");
-			config.setDouble("video_refresh_rate", getRefreshRate());
-		} else {
-			Log.i(TAG, "Refresh rate set to 59.95Hz (default).");
-			config.setDouble("video_refresh_rate", 59.95);
-		}
+		config.setDouble("video_refresh_rate", getRefreshRate());
 		
 		String aspect = prefs.getString("video_aspect_ratio", "auto");
 		if (aspect.equals("full")) {
@@ -355,6 +388,8 @@ public class RetroArch extends Activity implements
 			config.setBoolean("video_force_aspect", true);
 			config.setDouble("video_aspect_ratio", aspect_ratio);
 		}
+		
+		config.setBoolean("video_scale_integer", prefs.getBoolean("video_scale_integer", false));
 		
 		String shaderPath = prefs.getString("video_bsnes_shader", "");
 		if (prefs.getBoolean("video_shader_enable", false) && new File(shaderPath).exists()) {

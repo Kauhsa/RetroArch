@@ -132,14 +132,24 @@ static void android_input_poll(void *data)
          long_msg_enable = true;
       }
 
-      if (keycode == AKEYCODE_BACK )
+      if (keycode == AKEYCODE_BACK)
       {
-         int meta = AKeyEvent_getMetaState(event);
-         if (!(meta & AMETA_ALT_ON))
+         uint8_t unpacked = (keycode_lut[AKEYCODE_BACK] >> ((state_id+1) << 3)) - 1;
+         uint64_t input_state = (1ULL << unpacked);
+
+         if (type_event == AINPUT_EVENT_TYPE_KEY && input_state < (1ULL << RARCH_FIRST_META_KEY)
+               && input_state > 0)
          {
-            *lifecycle_state |= (1ULL << RARCH_QUIT_KEY);
-            AInputQueue_finishEvent(android_app->inputQueue, event, handled);
-            break;
+         }
+         else
+         {
+            int meta = AKeyEvent_getMetaState(event);
+            if (!(meta & AMETA_ALT_ON))
+            {
+               *lifecycle_state |= (1ULL << RARCH_QUIT_KEY);
+               AInputQueue_finishEvent(android_app->inputQueue, event, handled);
+               break;
+            }
          }
       }
 
@@ -172,10 +182,16 @@ static void android_input_poll(void *data)
                   action == AMOTION_EVENT_ACTION_CANCEL || action == AMOTION_EVENT_ACTION_POINTER_UP) ||
                (source == AINPUT_SOURCE_MOUSE && action != AMOTION_EVENT_ACTION_DOWN);
 
-            int max = min(AMotionEvent_getPointerCount(event), MAX_TOUCH);
-            for (motion_pointer = 0; motion_pointer < max; motion_pointer++)
+            if (keyup && motion_pointer < MAX_TOUCH)
             {
-               if (!keyup)
+               memmove(pointer + motion_pointer, pointer + motion_pointer + 1, (MAX_TOUCH - motion_pointer - 1) * sizeof(struct input_pointer));
+               if (pointer_count > 0)
+                  pointer_count--;
+            }
+            else
+            {
+               int pointer_max = min(AMotionEvent_getPointerCount(event), MAX_TOUCH);
+               for (motion_pointer = 0; motion_pointer < pointer_max; motion_pointer++)
                {
                   x = AMotionEvent_getX(event, motion_pointer);
                   y = AMotionEvent_getY(event, motion_pointer);
@@ -185,12 +201,6 @@ static void android_input_poll(void *data)
                         &pointer[motion_pointer].full_x, &pointer[motion_pointer].full_y);
 
                   pointer_count = max(pointer_count, motion_pointer + 1);
-               }
-               else
-               {
-                  memmove(pointer + motion_pointer, pointer + motion_pointer + 1, (MAX_TOUCH - motion_pointer - 1) * sizeof(struct input_pointer));
-                  if (pointer_count > 0)
-                     pointer_count--;
                }
             }
          }

@@ -406,9 +406,13 @@ void init_audio(void)
       g_extern.audio_data.chunk_size = g_extern.audio_data.nonblock_chunk_size;
    }
 
+   g_extern.audio_data.orig_src_ratio =
+      g_extern.audio_data.src_ratio =
+      (double)g_settings.audio.out_rate / g_settings.audio.in_rate;
+
    const char *resampler = *g_settings.audio.resampler ? g_settings.audio.resampler : NULL;
    if (!rarch_resampler_realloc(&g_extern.audio_data.resampler_data, &g_extern.audio_data.resampler,
-         resampler))
+         resampler, g_extern.audio_data.orig_src_ratio))
    {
       RARCH_ERR("Failed to initialize resampler \"%s\".\n", resampler ? resampler : "(default)");
       g_extern.audio_active = false;
@@ -420,10 +424,6 @@ void init_audio(void)
 
    rarch_assert(g_settings.audio.out_rate < g_settings.audio.in_rate * AUDIO_MAX_RATIO);
    rarch_assert(g_extern.audio_data.outsamples = (sample_t*)malloc(outsamples_max * sizeof(sample_t)));
-
-   g_extern.audio_data.orig_src_ratio =
-      g_extern.audio_data.src_ratio =
-      (double)g_settings.audio.out_rate / g_settings.audio.in_rate;
 
    if (g_extern.audio_active && g_settings.audio.rate_control)
    {
@@ -494,7 +494,8 @@ static void compute_monitor_fps_statistics(void)
 {
    if (g_extern.measure_data.frame_time_samples_count < 2 * MEASURE_FRAME_TIME_SAMPLES_COUNT)
    {
-      RARCH_LOG("Does not have enough samples for monitor refresh rate estimation.\n");
+      RARCH_LOG("Does not have enough samples for monitor refresh rate estimation. Requires to run for at least %u frames.\n",
+            2 * MEASURE_FRAME_TIME_SAMPLES_COUNT);
       return;
    }
 
@@ -502,30 +503,30 @@ static void compute_monitor_fps_statistics(void)
 
    // Measure statistics on frame time (microsecs), *not* FPS.
    rarch_time_t accum = 0;
-   for (unsigned i = 1; i < samples; i++)
+   for (unsigned i = 0; i < samples; i++)
       accum += g_extern.measure_data.frame_time_samples[i];
 
 #if 0
-   for (unsigned i = 1; i < samples; i++)
+   for (unsigned i = 0; i < samples; i++)
       RARCH_LOG("Interval #%u: %d usec / frame.\n",
             i, (int)g_extern.measure_data.frame_time_samples[i]);
 #endif
 
-   rarch_time_t avg = accum / (samples - 1);
+   rarch_time_t avg = accum / samples;
    rarch_time_t accum_var = 0;
 
    // Drop first measurement. It is likely to be bad.
-   for (unsigned i = 1; i < samples; i++)
+   for (unsigned i = 0; i < samples; i++)
    {
       rarch_time_t diff = g_extern.measure_data.frame_time_samples[i] - avg;
       accum_var += diff * diff;
    }
 
-   double stddev = sqrt((double)accum_var / (samples - 2));
+   double stddev = sqrt((double)accum_var / (samples - 1));
    double avg_fps = 1000000.0 / avg;
 
    RARCH_LOG("Average monitor Hz: %.6f Hz. (%.3f %% frame time deviation, based on %u last samples).\n",
-         avg_fps, 100.0 * stddev / avg, samples - 1);
+         avg_fps, 100.0 * stddev / avg, samples);
 }
 
 void uninit_audio(void)

@@ -561,21 +561,53 @@ void gl_deinit_fbo(void *data)
    }
 }
 
+static void gl_update_tex_filter_frame(gl_t *gl)
+{
+   bool smooth = false;
+   if (!gl_shader_filter_type(gl, 1, &smooth))
+      return;
+
+   GLuint new_filt = smooth ? GL_LINEAR : GL_NEAREST;
+   if (new_filt == gl->tex_filter)
+      return;
+
+   gl->tex_filter = new_filt;
+   for (unsigned i = 0; i < TEXTURES; i++)
+   {
+      if (gl->texture[i])
+      {
+         glBindTexture(GL_TEXTURE_2D, gl->texture[i]);
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, gl->tex_filter);
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, gl->tex_filter);
+      }
+   }
+
+   glBindTexture(GL_TEXTURE_2D, gl->texture[gl->tex_index]);
+}
+
 void gl_init_fbo(void *data, unsigned width, unsigned height)
 {
    gl_t *gl = (gl_t*)data;
 
+   gl_update_tex_filter_frame(gl);
+
    // No need to use FBOs.
+#ifndef RARCH_CONSOLE
+   /* we always want FBO to be at least initialized on startup for consoles */
    if (!g_settings.video.render_to_texture && gl_shader_num_func(gl) == 0)
       return;
+#endif
 
    struct gl_fbo_scale scale, scale_last;
    gl_shader_scale(gl, 1, &scale);
    gl_shader_scale(gl, gl_shader_num_func(gl), &scale_last);
 
    // No need to use FBOs.
+#ifndef RARCH_CONSOLE
+   /* we always want FBO to be at least initialized on startup for consoles */
    if (gl_shader_num_func(gl) == 1 && !scale.valid && !g_settings.video.render_to_texture)
       return;
+#endif
 
    if (!load_fbo_proc(gl))
    {
@@ -1920,6 +1952,9 @@ static void gl_start(void)
 #ifdef RARCH_CONSOLE
    // Comes too early for console - moved to gl_start
    gl->font_ctx = gl_font_init_first(gl, g_settings.video.font_path, g_settings.video.font_size);
+
+   if (!g_settings.video.render_to_texture)
+      gl_deinit_fbo(gl);
 #endif
 
    context_get_available_resolutions_func();
